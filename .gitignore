@@ -1,0 +1,14 @@
+# Secrets
+desktop/.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Runtime artifacts
+desktop/logs/
+desktop/audio/
+desktop/models/
+desktop/memory.json
