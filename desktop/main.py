@@ -79,17 +79,21 @@ class Knoc8:
                     continue
                 print(f"\nYou said: {text}")
                 reply = self.planner.handle(
-                    text, confirm=self._confirm, on_status=self.serial.send_status
+                    text,
+                    confirm=self._confirm,
+                    on_status=self.serial.send_status,
+                    on_step=self.serial.send_step,
                 )
                 print(f"{config.ASSISTANT_NAME}: {reply}")
                 self.serial.send_status("SPEAKING")
-                interrupted = self._speak_interruptible(reply, wake)
                 self.serial.drain()
                 wake.reset()
+                interrupted = self._speak_interruptible(reply, wake, highpass)
                 if interrupted:
                     log.info("Interrupted by wake word — listening.")
                     listening = True
                     capture.reset()
+                    self.serial.drain()
                     self.serial.send_status("LISTENING")
                 else:
                     self.serial.send_status("IDLE")
@@ -124,7 +128,7 @@ class Knoc8:
             except Exception as exc:
                 log.warning("Local TTS failed: %s", exc)
 
-    def _speak_interruptible(self, text: str, wake) -> bool:
+    def _speak_interruptible(self, text: str, wake, highpass) -> bool:
         try:
             proc = self.tts.speak_local_async(text)
         except Exception as exc:
@@ -135,10 +139,10 @@ class Knoc8:
         while proc.poll() is None and time.time() < deadline:
             event = self.serial.poll()
             if event is None:
-                time.sleep(0.01)
+                time.sleep(0.005)
                 continue
             kind, payload = event
-            if kind == "chunk" and wake.feed(payload):
+            if kind == "chunk" and wake.feed(highpass.process(payload), eager=True):
                 proc.kill()
                 interrupted = True
                 break

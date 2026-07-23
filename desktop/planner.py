@@ -101,6 +101,7 @@ class Planner:
         user_text: str,
         confirm: Callable[[str], bool],
         on_status: Callable[[str], None] = lambda s: None,
+        on_step: Callable[[str], None] = lambda s: None,
     ) -> str:
         start = time.time()
         self.memory.add_turn("user", user_text)
@@ -129,7 +130,7 @@ class Planner:
             return reply
 
         on_status("EXECUTING")
-        results = self._execute(plan[: config.MAX_PLAN_STEPS], confirm)
+        results = self._execute(plan[: config.MAX_PLAN_STEPS], confirm, on_step)
 
         summary = self._summarize(user_text, results, fallback=reply)
         ok = not any("ERROR" in r or "FAILED" in r or "DENIED" in r for r in results)
@@ -176,7 +177,12 @@ class Planner:
             return {"reply": raw[:400], "plan": []}
         return None
 
-    def _execute(self, plan: list[dict], confirm: Callable[[str], bool]) -> list[str]:
+    def _execute(
+        self,
+        plan: list[dict],
+        confirm: Callable[[str], bool],
+        on_step: Callable[[str], None] = lambda s: None,
+    ) -> list[str]:
         results: list[str] = []
         for i, step in enumerate(plan, 1):
             tool = str(step.get("tool", ""))
@@ -184,6 +190,8 @@ class Planner:
             args = step.get("args") or {}
             label = f"step {i}: {tool}.{action_name}({args})"
             log.info("Executing %s", label)
+            detail = str(next(iter(args.values()), "")).strip()
+            on_step(f"{action_name}: {detail}" if detail else f"{tool}.{action_name}")
 
             action = self._resolve(tool, action_name)
             if action is None:

@@ -26,19 +26,21 @@ class WakeWordDetector:
         log.info("Wake word detector ready — listening for '%s'",
                  config.WAKE_WORD_PHRASE)
 
-    def feed(self, pcm: bytes) -> bool:
+    def feed(self, pcm: bytes, eager: bool = False) -> bool:
         samples = np.frombuffer(pcm, dtype=np.int16)
         self._buf = np.concatenate([self._buf, samples])[-config.SAMPLE_RATE * 3:]
         if len(self._buf) < config.SAMPLE_RATE:
             return False
 
         now = time.time()
-        if now - self._last_check < config.WAKE_CHECK_INTERVAL:
+        interval = 0.4 if eager else config.WAKE_CHECK_INTERVAL
+        if now - self._last_check < interval:
             return False
 
         recent = self._buf[-config.SAMPLE_RATE:].astype(np.float32)
         rms = float(np.sqrt(np.mean(recent ** 2)))
-        if rms < config.VAD_ENERGY_THRESHOLD:
+        threshold = config.VAD_ENERGY_THRESHOLD * (0.6 if eager else 1.0)
+        if rms < threshold:
             return False
         self._last_check = now
 

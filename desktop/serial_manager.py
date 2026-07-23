@@ -57,7 +57,10 @@ class SerialManager:
     def send_line(self, line: str) -> None:
         if not self.connected:
             return
-        self.conn.write((line + "\n").encode("ascii"))
+        self.conn.write((line + "\n").encode("ascii", errors="ignore"))
+
+    def send_step(self, text: str) -> None:
+        self.send_line(f"STEP:{text[:38]}")
 
     def send_status(self, status: str) -> None:
         log.debug("STATUS -> %s", status)
