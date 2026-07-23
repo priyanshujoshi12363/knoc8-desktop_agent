@@ -12,3 +12,6 @@ desktop/logs/
 desktop/audio/
 desktop/models/
 desktop/memory.json
+
+# Claude Code internal files
+.claude/
