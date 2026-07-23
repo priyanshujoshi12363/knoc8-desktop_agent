@@ -8,6 +8,7 @@ from tools import (
     notification,
     system,
     terminal,
+    wait,
     windows,
 )
 from tools.base import Action
@@ -23,6 +24,7 @@ REGISTRY: dict[str, dict[str, Action]] = {
     "windows": windows.ACTIONS,
     "notification": notification.ACTIONS,
     "system": system.ACTIONS,
+    "wait": wait.ACTIONS,
 }
 
 

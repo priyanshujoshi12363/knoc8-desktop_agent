@@ -23,14 +23,15 @@ def is_dangerous(command: str) -> bool:
 def run(command: str, timeout: int = 120) -> str:
     global _cwd
 
-    cd_match = re.fullmatch(r"\s*cd\s+(.+?)\s*", command)
-    if cd_match:
-        target = os.path.expanduser(cd_match.group(1).strip('"'))
-        new_dir = os.path.abspath(os.path.join(_cwd, target))
-        if os.path.isdir(new_dir):
-            _cwd = new_dir
-            return f"Working directory is now {_cwd}"
-        return f"Directory not found: {new_dir}"
+    if "&&" not in command and "|" not in command:
+        cd_match = re.fullmatch(r"\s*cd\s+(?:/d\s+)?(.+?)\s*", command)
+        if cd_match:
+            target = os.path.expanduser(cd_match.group(1).strip('"'))
+            new_dir = os.path.abspath(os.path.join(_cwd, target))
+            if os.path.isdir(new_dir):
+                _cwd = new_dir
+                return f"Working directory is now {_cwd}"
+            return f"Directory not found: {new_dir}"
 
     log.info("RUN [%s]> %s", _cwd, command)
     try:

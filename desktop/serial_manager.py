@@ -67,9 +67,10 @@ class SerialManager:
         line = self._read_line()
         if line is None:
             return None
-        if line.startswith("CHUNK:"):
+        idx = line.rfind("CHUNK:")
+        if idx != -1:
             try:
-                size = int(line.split(":", 1)[1])
+                size = int(line[idx + 6:])
             except ValueError:
                 return None
             return ("chunk", self._read_exact(size))

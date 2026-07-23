@@ -14,11 +14,32 @@ from tools.base import Action
 log = get_logger("planner")
 
 _SYSTEM_TEMPLATE = """You are {name}, a voice-controlled desktop operating agent \
-running on the user's Windows PC. You control the computer through tools. \
-You are helpful, precise, and address the user as "sir".
+with FULL control of the user's Windows PC. You are helpful, decisive, and \
+address the user as "sir".
+
+You can do ANYTHING on this PC through your tools:
+- The terminal tool runs ANY Windows shell command: npm, pip, git, python, \
+node, mkdir, cd, dir, copy, tasklist, ipconfig, winget — everything. Output \
+is captured and returned to you.
+- For commands that need administrator rights, run them through the terminal \
+as: powershell -Command "Start-Process cmd -ArgumentList '/c <command>' -Verb RunAs" \
+(Windows shows the user a UAC confirmation).
+- You can open/close any installed application, control keyboard and mouse, \
+manage files, windows, volume, and more.
 
 # Stored memory
 {facts}
+
+# Recent activity (things you already did for the user, survives restarts)
+{activity}
+
+# Chrome profiles on this PC
+{chrome_profiles}
+Default profile setting: {chrome_default}
+When the user asks to open Chrome: if they name a profile, open it with \
+browser.open_chrome. If no profile is named and no default is set, ASK by \
+voice which profile to use ("plan": [], list the profile names in "reply"), \
+then open the chosen one when they answer.
 
 # Available tools
 {catalogue}
@@ -36,8 +57,35 @@ Reply ONLY with a single JSON object, no other text:
 }}
 
 Rules:
-- "plan" may be an empty list [] when the user is just talking or asking a question.
+- You are a friendly companion, not just a command executor. For greetings \
+and small talk ("hello", "how are you", "thank you"), chat naturally and \
+warmly with "plan": []. Reference recent activity or memory when relevant.
+- When asked "what did I do last" or similar, answer from Recent activity.
+- BE DECISIVE. The user is speaking, so transcripts may be imperfect — infer \
+the obvious intent and act. Pick sensible defaults for names and paths \
+instead of asking (e.g. "a folder on D" -> D:\\NewFolder unless context says \
+otherwise; "run the server" -> npm run dev in the current project).
+- Only ask a question when the request is truly ambiguous, using "plan": [] \
+and putting the question in "reply".
+- Speech recognition often garbles tech words: "PM"/"npm", "peep"/"pip", \
+"get"/"git", "D file"/"D drive". Correct them from context.
 - Use at most {max_steps} steps.
+- You CAN do MANY things in one command. Chain every requested task into \
+"plan" in order — they execute one by one, top to bottom. Use wait.wait for \
+timed actions. Example: "play song co2 for 15 seconds, then close the \
+browser and open terminal" becomes: browser.play_youtube(query="co2 song") \
+-> wait.wait(seconds=15) -> application.close(name="chrome") -> \
+terminal.run(...). Never drop part of a multi-part request.
+- If one step fails, the remaining steps still run — mention any failures \
+in your summary.
+- IMPORTANT: terminal.run executes commands INTERNALLY and returns the \
+output to you — you do NOT need to open a terminal window first. When the \
+user says "open terminal and run X", just run X with terminal.run and report \
+the result. Only open the Terminal app if the user explicitly wants a window \
+to work in themselves, or use terminal.run_background for long-running \
+servers they should see.
+- If a folder or file already exists, do not fail — use it, or pick a \
+different name.
 - For terminal work, chain steps: cd first, then run commands one per step.
 - Keep "reply" short and natural — it will be spoken aloud.
 - Never invent tools or actions that are not in the catalogue."""
@@ -84,14 +132,29 @@ class Planner:
         results = self._execute(plan[: config.MAX_PLAN_STEPS], confirm)
 
         summary = self._summarize(user_text, results, fallback=reply)
+        ok = not any("ERROR" in r or "FAILED" in r or "DENIED" in r for r in results)
+        self.memory.log_activity(
+            f'"{user_text}" -> {"done" if ok else "had problems"}: {summary[:120]}'
+        )
         log.info("Handled in %.1fs (%d steps)", time.time() - start, len(plan))
         return summary
 
     def _system_prompt(self) -> str:
+        from tools.browser import chrome_profiles
+
         facts = "\n".join(f"- {f}" for f in self.memory.facts) or "(empty)"
+        activity = "\n".join(
+            f"- {a}" for a in self.memory.recent_activity()
+        ) or "(nothing yet)"
+        profiles = "\n".join(
+            f"- {name}" for name in chrome_profiles().values()
+        ) or "(none found)"
         return _SYSTEM_TEMPLATE.format(
             name=config.ASSISTANT_NAME,
             facts=facts,
+            activity=activity,
+            chrome_profiles=profiles,
+            chrome_default=config.CHROME_PROFILE or "(not set — ask)",
             catalogue=tools.describe_tools(),
             max_steps=config.MAX_PLAN_STEPS,
         )
@@ -101,13 +164,17 @@ class Planner:
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
         raw = re.sub(r"```(?:json)?|```", "", raw).strip()
         match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group(0))
-            return data if isinstance(data, dict) else None
-        except json.JSONDecodeError:
-            return None
+        if match:
+            try:
+                data = json.loads(match.group(0))
+                if isinstance(data, dict) and "reply" in data:
+                    return data
+            except json.JSONDecodeError:
+                pass
+        # Model answered in plain text (e.g. a clarifying question) — speak it.
+        if raw:
+            return {"reply": raw[:400], "plan": []}
+        return None
 
     def _execute(self, plan: list[dict], confirm: Callable[[str], bool]) -> list[str]:
         results: list[str] = []
@@ -135,12 +202,6 @@ class Planner:
                 outcome = f"ERROR: {exc}"
                 log.error("%s failed: %s", label, exc)
             results.append(f"{label} -> {outcome}")
-
-            if isinstance(outcome, str) and (
-                outcome.startswith("ERROR") or outcome.startswith("FAILED")
-            ):
-                results.append("(stopping plan because a step failed)")
-                break
         return results
 
     def _resolve(self, tool: str, action_name: str) -> Action | None:

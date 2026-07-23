@@ -101,17 +101,19 @@ Every module has one responsibility. Adding a tool = one new file + one registry
 
 | Part | Purpose |
 |---|---|
-| ESP32 dev board | The voice interface |
+| ESP32-C6 dev board | The voice interface |
 | INMP441 | I2S microphone |
 | SSD1306 128×64 OLED | Status display (I2C) |
 
-### Wiring
+### Wiring (ESP32-C6)
 
-| Component | Pin | ESP32 GPIO |
+| Component | Pin | ESP32-C6 GPIO |
 |---|---|---|
-| INMP441 | SCK / WS / SD | 14 / 15 / 32 |
+| INMP441 | SCK / WS / SD | 4 / 5 / 2 |
 | INMP441 | L/R | GND |
-| SSD1306 | SDA / SCL | 21 / 22 |
+| SSD1306 | SDA / SCL | 6 / 7 |
+
+> ⚠️ Never wire anything to the flash pins (labeled CLK/CMD/SD0-SD3 on some boards) — it corrupts flash access.
 
 Mic audio: **16 kHz · 16-bit · mono PCM** over serial at **921600 baud**. Spoken replies play through the **PC speakers**.
 
@@ -123,7 +125,7 @@ Mic audio: **16 kHz · 16-bit · mono PCM** over serial at **921600 baud**. Spok
 
 1. Open `esp32/firmware.ino` in Arduino IDE
 2. Install **Adafruit SSD1306** + **Adafruit GFX Library** from Library Manager
-3. Select your ESP32 board on **COM16** and upload
+3. Select board **ESP32C6 Dev Module** (needs Arduino-ESP32 core 3.x) and upload at speed **115200**
 
 ### 2 — Set up the desktop app
 

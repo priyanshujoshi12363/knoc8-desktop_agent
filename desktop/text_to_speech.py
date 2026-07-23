@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import uuid
 import wave
 
@@ -18,14 +20,34 @@ class TextToSpeech:
         finally:
             wav_path.unlink(missing_ok=True)
 
-    def speak_local(self, text: str) -> None:
-        import pyttsx3
+    @staticmethod
+    def _script(text: str) -> str:
+        return (
+            "import pyttsx3\n"
+            "e = pyttsx3.init()\n"
+            f"e.setProperty('rate', {config.TTS_RATE})\n"
+            f"e.say({text!r})\n"
+            "e.runAndWait()\n"
+        )
 
-        engine = pyttsx3.init()
-        engine.setProperty("rate", config.TTS_RATE)
-        engine.say(text)
-        engine.runAndWait()
-        engine.stop()
+    def speak_local(self, text: str) -> None:
+        try:
+            subprocess.run(
+                [sys.executable, "-c", self._script(text)],
+                timeout=60,
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("TTS subprocess timed out — killed, continuing.")
+
+    def speak_local_async(self, text: str) -> subprocess.Popen:
+        return subprocess.Popen(
+            [sys.executable, "-c", self._script(text)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
 
     @staticmethod
     def _render_wav(text: str, path: str) -> None:

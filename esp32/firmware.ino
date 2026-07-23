@@ -25,7 +25,6 @@ static int32_t micRaw[CHUNK_SAMPLES];
 static int16_t pcm[CHUNK_SAMPLES];
 
 String lineBuf;
-bool micEnabled = true;
 
 void showStatus(const String &line1, const String &line2 = "") {
   display.clearDisplay();
@@ -69,24 +68,12 @@ void streamMicChunk() {
 void handleLine(const String &line) {
   if (line.startsWith("STATUS:")) {
     String s = line.substring(7);
-    if (s == "IDLE") {
-      micEnabled = true;
-      showStatus("IDLE", "Say 'Hey Agent'");
-    } else if (s == "LISTENING") {
-      micEnabled = true;
-      showStatus("LISTEN", "Speak now...");
-    } else if (s == "THINKING") {
-      micEnabled = false;
-      showStatus("THINK", "Processing...");
-    } else if (s == "EXECUTING") {
-      micEnabled = false;
-      showStatus("WORKING", "Running task...");
-    } else if (s == "SPEAKING") {
-      micEnabled = false;
-      showStatus("SPEAK", "");
-    } else {
-      showStatus(s, "");
-    }
+    if (s == "IDLE")           showStatus("IDLE", "Say 'Hey Agent'");
+    else if (s == "LISTENING") showStatus("LISTEN", "Speak now...");
+    else if (s == "THINKING")  showStatus("THINK", "Processing...");
+    else if (s == "EXECUTING") showStatus("WORKING", "Running task...");
+    else if (s == "SPEAKING")  showStatus("SPEAK", "Say wake word to stop");
+    else                       showStatus(s, "");
   }
 }
 
@@ -118,7 +105,5 @@ void setup() {
 
 void loop() {
   pollSerial();
-  if (micEnabled) {
-    streamMicChunk();
-  }
+  streamMicChunk();
 }

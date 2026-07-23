@@ -1,4 +1,7 @@
 import sys
+import time
+
+import serial
 
 import config
 from llm import create_provider
@@ -30,10 +33,12 @@ class Knoc8:
             self._text_loop()
 
     def _hardware_loop(self) -> None:
+        from audio_dsp import HighPassFilter, denoise_utterance
         from wake_word import UtteranceCapture, WakeWordDetector
 
         wake = WakeWordDetector()
         capture = UtteranceCapture()
+        highpass = HighPassFilter()
         listening = False
 
         self.serial.send_status("IDLE")
@@ -48,6 +53,8 @@ class Knoc8:
                     if str(payload).startswith("LOG:"):
                         log.debug("ESP32 %s", payload)
                     continue
+
+                payload = highpass.process(payload)
 
                 if not listening:
                     if wake.feed(payload):
@@ -65,7 +72,7 @@ class Knoc8:
                     continue
 
                 self.serial.send_status("THINKING")
-                text = self.stt.transcribe(audio)
+                text = self.stt.transcribe(denoise_utterance(audio))
                 if not text:
                     self.serial.drain()
                     self.serial.send_status("IDLE")
@@ -76,17 +83,27 @@ class Knoc8:
                 )
                 print(f"{config.ASSISTANT_NAME}: {reply}")
                 self.serial.send_status("SPEAKING")
-                try:
-                    self.tts.speak_local(reply)
-                except Exception as exc:
-                    log.warning("TTS failed: %s", exc)
+                interrupted = self._speak_interruptible(reply, wake)
                 self.serial.drain()
                 wake.reset()
-                self.serial.send_status("IDLE")
+                if interrupted:
+                    log.info("Interrupted by wake word — listening.")
+                    listening = True
+                    capture.reset()
+                    self.serial.send_status("LISTENING")
+                else:
+                    self.serial.send_status("IDLE")
+                    log.info("Ready — say '%s' for the next command.",
+                             config.WAKE_WORD_PHRASE)
         except KeyboardInterrupt:
             log.info("Shutting down.")
+        except serial.SerialException as exc:
+            log.warning("ESP32 disconnected (%s) — exiting.", exc)
         finally:
-            self.serial.send_status("IDLE")
+            try:
+                self.serial.send_status("IDLE")
+            except Exception:
+                pass
             self.serial.close()
 
     def _text_loop(self) -> None:
@@ -106,6 +123,28 @@ class Knoc8:
                 self.tts.speak_local(reply)
             except Exception as exc:
                 log.warning("Local TTS failed: %s", exc)
+
+    def _speak_interruptible(self, text: str, wake) -> bool:
+        try:
+            proc = self.tts.speak_local_async(text)
+        except Exception as exc:
+            log.warning("TTS failed: %s", exc)
+            return False
+        deadline = time.time() + 60
+        interrupted = False
+        while proc.poll() is None and time.time() < deadline:
+            event = self.serial.poll()
+            if event is None:
+                time.sleep(0.01)
+                continue
+            kind, payload = event
+            if kind == "chunk" and wake.feed(payload):
+                proc.kill()
+                interrupted = True
+                break
+        if proc.poll() is None:
+            proc.kill()
+        return interrupted
 
     @staticmethod
     def _confirm(description: str) -> bool:

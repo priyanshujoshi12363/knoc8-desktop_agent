@@ -30,18 +30,22 @@ WHISPER_MODEL: str = os.getenv("KNOC8_WHISPER_MODEL", "base")
 WHISPER_DEVICE: str = "cpu"
 WHISPER_COMPUTE: str = "int8"
 
-TTS_RATE: int = 175
+TTS_RATE: int = int(os.getenv("KNOC8_TTS_RATE", "175"))
 
 WAKE_WORD_PHRASE: str = os.getenv("KNOC8_WAKE_WORD", "hey agent").lower()
-WAKE_STT_MODEL: str = "tiny"
+WAKE_STT_MODEL: str = os.getenv("KNOC8_WAKE_MODEL", "tiny")
 WAKE_CHECK_INTERVAL: float = 0.8
 WAKE_MATCH_RATIO: float = 0.85
-VAD_ENERGY_THRESHOLD: int = 300
-VAD_SILENCE_MS: int = 1200
+VAD_ENERGY_THRESHOLD: int = int(os.getenv("KNOC8_MIC_THRESHOLD", "300"))
+VAD_SILENCE_MS: int = int(os.getenv("KNOC8_SILENCE_MS", "1200"))
 VAD_START_TIMEOUT_MS: int = 5000
 VAD_MAX_UTTERANCE_MS: int = 15000
 
-MAX_PLAN_STEPS: int = 12
+CHROME_PROFILE: str = os.getenv("KNOC8_CHROME_PROFILE", "")
+
+NOISE_REDUCTION: bool = os.getenv("KNOC8_NOISE_REDUCTION", "1") != "0"
+
+MAX_PLAN_STEPS: int = 20
 ASSISTANT_NAME: str = "Knoc8"
 
 for _d in (AUDIO_DIR, MODELS_DIR, LOGS_DIR):

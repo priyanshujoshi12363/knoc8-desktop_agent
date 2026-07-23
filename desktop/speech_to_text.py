@@ -29,7 +29,15 @@ class SpeechToText:
             return ""
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         segments, _info = self._ensure_model().transcribe(
-            audio, language="en", vad_filter=True
+            audio,
+            language="en",
+            vad_filter=True,
+            initial_prompt=(
+                "Voice commands for a Windows PC assistant: open Chrome, "
+                "open Cursor, run npm install, npm run dev, pip install, "
+                "git status, git push, mkdir, cd, D drive, C drive, "
+                "create a folder, open terminal, VS Code, YouTube, Google."
+            ),
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
         log.info("Transcript: %s", text or "(silence)")
