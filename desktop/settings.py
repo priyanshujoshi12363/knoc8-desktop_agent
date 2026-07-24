@@ -21,6 +21,7 @@ SCHEMA = [
     ("KNOC8_TTS_RATE", "Voice speed (words per minute)", "175"),
     ("KNOC8_CHROME_PROFILE", "Default Chrome profile (empty = ask by voice)", ""),
     ("KNOC8_NOISE_REDUCTION", "Noise cancellation (1 = on, 0 = off)", "1"),
+    ("KNOC8_SAFE_MODE", "Safe Mode: ask before destructive actions (1 = on, 0 = off)", "1"),
 ]
 
 

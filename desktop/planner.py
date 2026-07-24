@@ -97,6 +97,7 @@ class Planner:
     def __init__(self, provider: LLMProvider, memory: Memory) -> None:
         self.provider = provider
         self.memory = memory
+        self.awaiting_reply = False
 
     def handle(
         self,
@@ -106,6 +107,7 @@ class Planner:
         on_step: Callable[[str], None] = lambda s: None,
     ) -> str:
         start = time.time()
+        self.awaiting_reply = False
         self.memory.add_turn("user", user_text)
 
         messages = [{"role": "system", "content": self._system_prompt()}]
@@ -128,7 +130,11 @@ class Planner:
         self.memory.add_turn("assistant", json.dumps(parsed, ensure_ascii=False))
 
         if not plan:
-            log.info("Chat-only reply (%.1fs)", time.time() - start)
+            # A chat-only reply that contains a question means Knoc8 is asking
+            # the user something — open the mic for the answer, no wake word.
+            self.awaiting_reply = "?" in reply
+            log.info("Chat-only reply (%.1fs)%s", time.time() - start,
+                     " [awaiting answer]" if self.awaiting_reply else "")
             return reply
 
         on_status("EXECUTING")
@@ -200,8 +206,14 @@ class Planner:
                 results.append(f"{label} -> unknown tool/action, skipped")
                 continue
 
-            if self._needs_confirmation(tool, action, args):
-                if not confirm(f"{tool}.{action_name} {args}"):
+            gate = self._gate(tool, action, args)
+            # Safe Mode ON  -> ask before anything risky.
+            # Safe Mode OFF -> run risky commands freely, but truly destructive
+            #                  ("block" class) still always asks.
+            need_confirm = gate == "block" or (gate == "confirm" and config.SAFE_MODE)
+            if need_confirm:
+                prompt = self._confirm_text(tool, action_name, args, gate)
+                if not confirm(prompt):
                     results.append(f"{label} -> DENIED by user")
                     log.warning("User denied %s", label)
                     continue
@@ -225,12 +237,26 @@ class Planner:
         return tools.get_action(tool, action_name)
 
     @staticmethod
-    def _needs_confirmation(tool: str, action: Action, args: dict) -> bool:
-        if action.dangerous:
-            return True
+    def _gate(tool: str, action: Action, args: dict) -> str:
+        """Return 'safe', 'confirm', or 'block' for a proposed action."""
         if tool == "terminal":
-            return terminal.is_dangerous(str(args.get("command", "")))
-        return False
+            command = str(args.get("command", ""))
+            return terminal.classify(command) if command else "safe"
+        if action.dangerous:
+            return "confirm"
+        return "safe"
+
+    @staticmethod
+    def _confirm_text(tool: str, action_name: str, args: dict, gate: str) -> str:
+        detail = str(next(iter(args.values()), "")).strip()
+        human = {
+            "delete": f"Permanently delete:\n{detail}",
+            "run": f"Run this command:\n{detail}",
+            "shutdown": "Shut down this PC",
+            "restart": "Restart this PC",
+        }.get(action_name, f"{tool}.{action_name}\n{detail}")
+        head = "⚠ DANGEROUS ACTION\n\n" if gate == "block" else "Knoc8 wants to:\n\n"
+        return f"{head}{human}\n\nAllow this?"
 
     def _summarize(self, user_text: str, results: list[str], fallback: str) -> str:
         report = "\n".join(results)

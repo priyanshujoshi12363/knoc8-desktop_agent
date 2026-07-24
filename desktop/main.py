@@ -39,6 +39,7 @@ class Knoc8:
         wake = WakeWordDetector()
         capture = UtteranceCapture()
         highpass = HighPassFilter()
+        self._highpass = highpass
         listening = False
 
         self.serial.send_status("IDLE")
@@ -91,6 +92,13 @@ class Knoc8:
                 interrupted = self._speak_interruptible(reply, wake, highpass)
                 if interrupted:
                     log.info("Interrupted by wake word — listening.")
+                    listening = True
+                    capture.reset()
+                    self.serial.drain()
+                    self.serial.send_status("LISTENING")
+                elif self.planner.awaiting_reply:
+                    log.info("Knoc8 asked a question — listening for your answer "
+                             "(no wake word needed).")
                     listening = True
                     capture.reset()
                     self.serial.drain()
@@ -150,15 +158,58 @@ class Knoc8:
             proc.kill()
         return interrupted
 
-    @staticmethod
-    def _confirm(description: str) -> bool:
-        answer = input(f"\n⚠ CONFIRM dangerous action: {description}\n"
-                       "Type 'yes' to allow: ").strip().lower()
-        return answer in {"y", "yes"}
+    def _confirm(self, description: str) -> bool:
+        import confirm as confirm_mod
+
+        poll = self._voice_decision_poll() if self.serial.connected else None
+        if self.serial.connected:
+            try:
+                self.tts.speak_local_async(
+                    "Please confirm. Say confirm to allow, or cancel."
+                )
+            except Exception:
+                pass
+        decided = confirm_mod.confirm(
+            description, timeout=config.CONFIRM_TIMEOUT, poll=poll
+        )
+        if self.serial.connected:
+            self.serial.drain()
+        return decided
+
+    def _voice_decision_poll(self):
+        """Returns a poll() that transcribes short mic audio into yes/no."""
+        buf = bytearray()
+        clock = [time.time()]
+        need = config.SAMPLE_RATE * config.SAMPLE_WIDTH * 1.3
+        yes = ("confirm", "yes", "yeah", "yep", "allow", "do it", "okay", "ok")
+        no = ("cancel", "no", "nope", "stop", "don't", "dont")
+
+        def poll():
+            event = self.serial.poll()
+            if event and event[0] == "chunk":
+                buf.extend(self._highpass.process(event[1]))
+            if len(buf) >= need or (time.time() - clock[0] > 1.3 and buf):
+                audio = bytes(buf)
+                buf.clear()
+                clock[0] = time.time()
+                text = self.stt.transcribe(audio).lower()
+                if not text:
+                    return None
+                if any(w in text for w in yes):
+                    return "yes"
+                if any(w in text for w in no):
+                    return "no"
+            return None
+
+        return poll
 
 
 if __name__ == "__main__":
     try:
+        from bootstrap import needs_setup, run_first_time_setup
+
+        if needs_setup():
+            run_first_time_setup()
         Knoc8().run()
     except Exception as exc:
         log.critical("Fatal error: %s", exc, exc_info=True)

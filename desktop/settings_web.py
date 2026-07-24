@@ -1,13 +1,25 @@
 import json
+import secrets
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 import config
 from logger import get_logger
 from settings import load_env, save_env
 
 log = get_logger("settings-web")
+
+_TOKEN = secrets.token_urlsafe(24)
+_ALLOWED_HOSTS = {f"127.0.0.1:{config.SETTINGS_PORT}", f"localhost:{config.SETTINGS_PORT}"}
+
+# "Get your key" helper links shown next to each API-key field.
+_HELP_LINKS = {
+    "OLLAMA_API_KEY": ("https://ollama.com/settings/keys", "Get your Ollama key"),
+    "ANTHROPIC_API_KEY": ("https://console.anthropic.com/settings/keys", "Get your Claude key"),
+    "OPENAI_API_KEY": ("https://platform.openai.com/api-keys", "Get your OpenAI key"),
+}
 
 # group, key, label, type, options, default, secret
 FIELDS = [
@@ -42,6 +54,8 @@ FIELDS = [
     ("Voice & Audio", "KNOC8_NOISE_REDUCTION", "Noise cancellation (1 on / 0 off)", "text", None, "1", False),
 
     ("Browser", "KNOC8_CHROME_PROFILE", "Default Chrome profile (blank = ask)", "text", None, "", False),
+
+    ("Safety", "KNOC8_SAFE_MODE", "Safe Mode — ask before delete / shutdown / risky commands", "toggle", None, "1", False),
 ]
 
 _server: ThreadingHTTPServer | None = None
@@ -52,11 +66,16 @@ def _schema_payload(values: dict[str, str]) -> list[dict]:
     out = []
     for group, key, label, ftype, options, default, secret in FIELDS:
         current = values.get(key, "")
+        if ftype == "toggle" and current == "":
+            current = default  # reflect the real default (e.g. Safe Mode ON)
+        link = _HELP_LINKS.get(key)
         out.append({
             "group": group, "key": key, "label": label, "type": ftype,
             "options": options, "default": default, "secret": secret,
             "value": (_MASK if (secret and current) else current),
-            "isSet": bool(current),
+            "isSet": bool(values.get(key, "")),
+            "linkUrl": link[0] if link else "",
+            "linkText": link[1] if link else "",
         })
     return out
 
@@ -91,16 +110,29 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _same_origin(self) -> bool:
+        for header in ("Origin", "Referer"):
+            val = self.headers.get(header)
+            if val:
+                host = urlparse(val).netloc
+                return host in _ALLOWED_HOSTS
+        return True  # no Origin/Referer (e.g. curl) — token check still applies
+
     def do_GET(self):
         if self.path.startswith("/api/config"):
             self._send(200, json.dumps(_schema_payload(load_env())),
                        "application/json")
         else:
-            self._send(200, PAGE)
+            self._send(200, PAGE.replace("{{TOKEN}}", _TOKEN))
 
     def do_POST(self):
         if not self.path.startswith("/api/config"):
             self._send(404, "not found")
+            return
+        if self.headers.get("X-Knoc8-Token") != _TOKEN or not self._same_origin():
+            log.warning("Rejected settings write (bad token / cross-origin)")
+            self._send(403, json.dumps({"ok": False, "error": "forbidden"}),
+                       "application/json")
             return
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
@@ -157,6 +189,9 @@ PAGE = """<!DOCTYPE html>
   .row:last-child{border-bottom:none}
   .row label{flex:0 0 46%;font-size:14px}
   .row .set{display:block;font-size:11px;color:var(--muted);margin-top:2px}
+  .getkey{display:inline-block;margin-top:5px;font-size:12px;color:#cfcfcf;
+    text-decoration:none;border-bottom:1px dashed #555;padding-bottom:1px}
+  .getkey:hover{color:#fff;border-color:#aaa}
   input,select{flex:1;background:var(--field);border:1px solid var(--border);
     color:var(--text);padding:11px 13px;border-radius:9px;font-size:14px;outline:none;
     transition:border-color .15s,box-shadow .15s;min-width:0}
@@ -168,6 +203,14 @@ PAGE = """<!DOCTYPE html>
     background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:34px}
   .combo{cursor:text}
   input::-webkit-calendar-picker-indicator{opacity:0;cursor:pointer}
+  .switch{position:relative;display:inline-block;width:52px;height:28px;flex:0 0 auto}
+  .switch input{opacity:0;width:0;height:0}
+  .slider{position:absolute;inset:0;background:#333;border:1px solid var(--border);
+    border-radius:28px;cursor:pointer;transition:.2s}
+  .slider:before{content:"";position:absolute;height:20px;width:20px;left:3px;top:3px;
+    background:var(--muted);border-radius:50%;transition:.2s}
+  .switch input:checked+.slider{background:var(--text)}
+  .switch input:checked+.slider:before{transform:translateX(24px);background:var(--bg)}
   .bar{position:sticky;bottom:0;background:rgba(10,10,10,.9);backdrop-filter:blur(10px);
     border-top:1px solid var(--border);padding:16px 32px;display:flex;
     align-items:center;justify-content:space-between}
@@ -213,10 +256,18 @@ async function load(){
       const row=el('div',{class:'row'});
       const lab=el('label',{},f.label);
       if(f.secret)lab.append(el('span',{class:'set'},f.isSet?'A key is saved. Leave blank to keep it.':'Not set.'));
+      if(f.linkUrl){const a=el('a',{class:'getkey',href:f.linkUrl,target:'_blank',rel:'noopener'},f.linkText+' →');lab.append(a);}
       row.append(lab);
       let inp;
       if(f.type==='select'){inp=el('select',{'data-key':f.key});
         for(const o of f.options){const op=el('option',{value:o},o);if(o===f.value)op.selected=true;inp.append(op);}}
+      else if(f.type==='toggle'){
+        const wrap=el('label',{class:'switch'});
+        inp=el('input',{'data-key':f.key,type:'checkbox'});
+        if(f.value==='1'||f.value===1||f.value===true)inp.checked=true;
+        wrap.append(inp,el('span',{class:'slider'}));
+        row.append(wrap);card.append(row);continue;
+      }
       else if(f.type==='model'){
         const dlid=f.key+'-dl';
         inp=el('input',{'data-key':f.key,list:dlid,value:f.value,placeholder:f.default||'',class:'combo'});
@@ -233,11 +284,14 @@ async function load(){
 }
 function toast(msg,err){const t=document.getElementById('toast');t.textContent=msg;
   t.className='show'+(err?' err':'');setTimeout(()=>t.className='',2200);}
+const TOKEN='{{TOKEN}}';
 document.getElementById('save').onclick=async()=>{
-  const body={};document.querySelectorAll('[data-key]').forEach(i=>{body[i.dataset.key]=i.value;});
-  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const body={};document.querySelectorAll('[data-key]').forEach(i=>{
+    body[i.dataset.key]=(i.type==='checkbox')?(i.checked?'1':'0'):i.value;});
+  const r=await fetch('/api/config',{method:'POST',
+    headers:{'Content-Type':'application/json','X-Knoc8-Token':TOKEN},body:JSON.stringify(body)});
   const j=await r.json();
-  if(j.ok){toast('Settings saved ✓');load();}else{toast('Error: '+j.error,true);}
+  if(j.ok){toast('Settings saved ✓');load();}else{toast('Error: '+(j.error||'failed'),true);}
 };
 load();
 </script>

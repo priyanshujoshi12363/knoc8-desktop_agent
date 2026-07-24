@@ -63,5 +63,10 @@ SETTINGS_PORT: int = int(os.getenv("KNOC8_SETTINGS_PORT", "8733"))
 MAX_PLAN_STEPS: int = 20
 ASSISTANT_NAME: str = "Knoc8"
 
+# Safety
+SAFE_MODE: bool = os.getenv("KNOC8_SAFE_MODE", "1") != "0"
+CONFIRM_TIMEOUT: int = int(os.getenv("KNOC8_CONFIRM_TIMEOUT", "20"))
+DELETE_TO_RECYCLE_BIN: bool = os.getenv("KNOC8_RECYCLE_BIN", "1") != "0"
+
 for _d in (AUDIO_DIR, MODELS_DIR, LOGS_DIR):
     _d.mkdir(parents=True, exist_ok=True)

@@ -1,6 +1,7 @@
 import os
 import shutil
 
+import config
 from logger import get_logger
 from tools.base import Action
 
@@ -9,6 +10,31 @@ log = get_logger("filesystem")
 
 def _expand(path: str) -> str:
     return os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
+
+
+def _recycle(path: str) -> bool:
+    """Send a file/folder to the Recycle Bin via the Windows shell."""
+    import ctypes
+    from ctypes import wintypes
+
+    FO_DELETE = 0x0003
+    FOF_ALLOWUNDO = 0x0040
+    FOF_NOCONFIRMATION = 0x0010
+    FOF_SILENT = 0x0004
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+            ("pFrom", wintypes.LPCWSTR), ("pTo", wintypes.LPCWSTR),
+            ("fFlags", ctypes.c_uint16), ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", wintypes.LPVOID), ("lpszProgressTitle", wintypes.LPCWSTR),
+        ]
+
+    op = SHFILEOPSTRUCTW()
+    op.wFunc = FO_DELETE
+    op.pFrom = path + "\0\0"
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
+    return ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op)) == 0
 
 
 def create_file(path: str, content: str = "") -> str:
@@ -48,13 +74,15 @@ def copy(path: str, destination: str) -> str:
 
 def delete(path: str) -> str:
     path = _expand(path)
+    if not os.path.exists(path):
+        return f"Path not found: {path}"
     log.warning("DELETING: %s", path)
+    if config.DELETE_TO_RECYCLE_BIN and _recycle(path):
+        return f"Moved to Recycle Bin: {path}"
     if os.path.isdir(path):
         shutil.rmtree(path)
-    elif os.path.exists(path):
-        os.remove(path)
     else:
-        return f"Path not found: {path}"
+        os.remove(path)
     return f"Deleted {path}"
 
 

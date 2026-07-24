@@ -9,15 +9,59 @@ log = get_logger("terminal")
 
 _cwd = os.path.expanduser("~")
 
-_DANGEROUS_PATTERNS = [
-    r"\brm\b", r"\bdel\b", r"\brmdir\b", r"\bformat\b", r"\bshutdown\b",
-    r"\brestart\b", r"\bdiskpart\b", r"\breg\s+(add|delete)\b", r"\bmklink\b",
-    r"Remove-Item", r"\btaskkill\b.*\/f", r"\bnet\s+user\b", r"\bcipher\b",
+# Known-safe command starts — these run without asking.
+_ALLOW_PREFIXES = {
+    "npm", "npx", "pnpm", "yarn", "node", "bun", "deno",
+    "python", "python3", "py", "pip", "pip3", "uv", "poetry", "pytest",
+    "git", "gh", "code", "cursor",
+    "mkdir", "cd", "dir", "ls", "echo", "type", "cls", "clear", "pwd",
+    "where", "whoami", "hostname", "date", "time", "tree",
+    "go", "cargo", "rustc", "dotnet", "java", "javac", "mvn", "gradle",
+    "vite", "tsc", "eslint", "prettier", "make", "cmake",
+    "ping", "ipconfig", "systeminfo", "tasklist", "ver", "chcp",
+}
+
+# Never run these without an explicit, loud confirmation (hard-blocked class).
+_HARD_BLOCK = [
+    r"\bformat\b", r"\bdiskpart\b", r"\bbcdedit\b", r"\bcipher\s+/w",
+    r"\|\s*iex\b", r"\|\s*Invoke-Expression", r"Invoke-WebRequest.*\|\s*iex",
+    r"Set-ExecutionPolicy", r"Set-MpPreference", r"Add-MpPreference",
+    r"\bvssadmin\b", r"\bwbadmin\b", r"\bfsutil\b", r"\bschtasks\b",
+    r"\breg\s+(add|delete)\b", r"\bnet\s+user\b", r"\bnet\s+localgroup\b",
+    r"rm\s+-rf\s+[/\\~]", r"\bdel\b.*\/[sq]", r"\brd\b.*\/s", r"rmdir.*\/s",
+    r"Remove-Item.*-Recurse", r"\bmkfs\b", r":\s*>\s*", r"\bshutdown\b",
+]
+
+# Common but risky — always confirm, allowed once approved.
+_CONFIRM_PATTERNS = [
+    r"\brm\b", r"\bdel\b", r"\brmdir\b", r"\brd\b", r"Remove-Item",
+    r"\bmove\b", r"\bmv\b", r"\btaskkill\b", r"\bkill\b", r"\bcurl\b",
+    r"Invoke-WebRequest", r"\bwget\b", r"\bmklink\b", r"\bicacls\b",
+    r"\battrib\b", r"\bnetsh\b", r"\bpowercfg\b", r"\bsc\b\s",
 ]
 
 
+def classify(command: str) -> str:
+    """Return 'block', 'confirm', or 'safe' for a shell command."""
+    cmd = command.strip()
+    for pat in _HARD_BLOCK:
+        if re.search(pat, cmd, re.IGNORECASE):
+            return "block"
+    for pat in _CONFIRM_PATTERNS:
+        if re.search(pat, cmd, re.IGNORECASE):
+            return "confirm"
+    # Chained/piped commands: only safe if every segment is safe.
+    segments = re.split(r"&&|\|\||\||;|&", cmd)
+    for seg in segments:
+        token = seg.strip().split()[0].lower() if seg.strip() else ""
+        token = token.strip('"')
+        if token and token not in _ALLOW_PREFIXES:
+            return "confirm"
+    return "safe"
+
+
 def is_dangerous(command: str) -> bool:
-    return any(re.search(p, command, re.IGNORECASE) for p in _DANGEROUS_PATTERNS)
+    return classify(command) != "safe"
 
 
 def run(command: str, timeout: int = 120) -> str:

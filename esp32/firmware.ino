@@ -17,7 +17,6 @@
 #define OLED_ADDR       0x3C
 
 #define CHUNK_SAMPLES   512
-#define FRAME_MS        80
 
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 I2SClass i2s;
@@ -38,8 +37,6 @@ bool blinking = false;
 int lookX = 0;
 unsigned long nextLook = 4000;
 uint8_t animPhase = 0;
-
-// ---------------- Eye drawing ----------------
 
 void drawEyePair(int w, int h, int y, int dx, int r) {
   int lx = 40 - w / 2 + dx;
@@ -75,60 +72,41 @@ void drawStatusLine(const char *text) {
   display.print(text);
 }
 
-void drawThinkingDots() {
-  int n = (animPhase / 3) % 4;
-  for (int i = 0; i < n; i++) {
-    display.fillCircle(52 + i * 12, 47, 2, SSD1306_WHITE);
-  }
-}
-
-void drawWorkBar() {
-  int pos = (animPhase * 6) % 96;
-  display.drawRoundRect(16, 44, 96, 6, 3, SSD1306_WHITE);
-  display.fillRoundRect(16 + pos, 45, 16, 4, 2, SSD1306_WHITE);
-}
-
 void drawFace() {
   display.clearDisplay();
-
   switch (face) {
     case FACE_BOOT:
-      display.setTextSize(2);
-      display.setTextColor(SSD1306_WHITE);
-      display.setCursor(28, 20);
-      display.print("KNOC8");
+      display.setTextSize(2); display.setTextColor(SSD1306_WHITE);
+      display.setCursor(28, 20); display.print("KNOC8");
       drawStatusLine("waking up...");
       break;
-
     case FACE_IDLE: {
       int h = blinkedHeight(26);
       drawEyePair(26, h, 14 + (26 - h) / 2, lookX, 8);
       drawStatusLine("say  hey agent");
       break;
     }
-
     case FACE_LISTEN: {
       int h = blinkedHeight(32);
       drawEyePair(30, h, 8 + (32 - h) / 2, 0, 10);
       drawStatusLine("listening...");
       break;
     }
-
-    case FACE_THINK: {
+    case FACE_THINK:
       drawEyePair(26, 10, 12, (animPhase % 12 < 6) ? -5 : 5, 4);
-      drawThinkingDots();
+      for (int i = 0; i < (animPhase / 3) % 4; i++)
+        display.fillCircle(52 + i * 12, 47, 2, SSD1306_WHITE);
       drawStatusLine("thinking...");
       break;
-    }
-
     case FACE_WORK: {
       int h = blinkedHeight(16);
       drawEyePair(26, h, 14, 0, 5);
-      drawWorkBar();
+      int pos = (animPhase * 6) % 96;
+      display.drawRoundRect(16, 44, 96, 6, 3, SSD1306_WHITE);
+      display.fillRoundRect(16 + pos, 45, 16, 4, 2, SSD1306_WHITE);
       drawStatusLine(stepText[0] ? stepText : "working...");
       break;
     }
-
     case FACE_SPEAK: {
       int bounce = (animPhase % 4 < 2) ? 0 : 2;
       drawHappyEyes(8 + bounce);
@@ -141,15 +119,12 @@ void drawFace() {
 
 void updateFace() {
   unsigned long now = millis();
-  if (now - lastFrame < FRAME_MS) return;
+  if (now - lastFrame < 80) return;
   lastFrame = now;
   animPhase++;
-
   if ((face == FACE_IDLE || face == FACE_LISTEN || face == FACE_WORK)
       && !blinking && now >= nextBlink) {
-    blinking = true;
-    blinkStart = now;
-    nextBlink = now + 2000 + random(3500);
+    blinking = true; blinkStart = now; nextBlink = now + 2000 + random(3500);
   }
   if (face == FACE_IDLE && now >= nextLook) {
     int r = random(3);
@@ -157,11 +132,8 @@ void updateFace() {
     nextLook = now + 1500 + random(3000);
   }
   if (face != FACE_IDLE) lookX = 0;
-
   drawFace();
 }
-
-// ---------------- Audio ----------------
 
 void setupMic() {
   i2s.setPins(MIC_SCK_PIN, MIC_WS_PIN, -1, MIC_SD_PIN, -1);
@@ -173,27 +145,22 @@ void streamMicChunk() {
   size_t bytesRead = i2s.readBytes((char *)micRaw, sizeof(micRaw));
   int samples = bytesRead / sizeof(int32_t);
   if (samples <= 0) return;
-
   for (int i = 0; i < samples; i++) {
     int32_t s = micRaw[i] >> 14;
     if (s > 32767) s = 32767;
     if (s < -32768) s = -32768;
     pcm[i] = (int16_t)s;
   }
-
   int nBytes = samples * sizeof(int16_t);
   Serial.printf("CHUNK:%d\n", nBytes);
   Serial.write((uint8_t *)pcm, nBytes);
 }
-
-// ---------------- Serial protocol ----------------
 
 void setFace(FaceState f) {
   if (face != f) {
     face = f;
     animPhase = 0;
     if (f != FACE_WORK) stepText[0] = '\0';
-    drawFace();
   }
 }
 
@@ -210,7 +177,6 @@ void handleLine(const String &line) {
     s.trim();
     strncpy(stepText, s.c_str(), sizeof(stepText) - 1);
     stepText[sizeof(stepText) - 1] = '\0';
-    if (face == FACE_WORK) drawFace();
   }
 }
 
@@ -226,8 +192,6 @@ void pollSerial() {
     }
   }
 }
-
-// ---------------- Arduino entry points ----------------
 
 void setup() {
   Serial.begin(SERIAL_BAUD);

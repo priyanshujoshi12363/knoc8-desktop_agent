@@ -23,6 +23,24 @@ class HighPassFilter:
         return np.clip(y, -32768, 32767).astype(np.int16).tobytes()
 
 
+def normalize(pcm: bytes, target_rms: float = 0.12, max_gain: float = 10.0) -> bytes:
+    """Boost quiet/far speech to a consistent level Whisper transcribes best."""
+    a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    if not len(a):
+        return pcm
+    rms = float(np.sqrt(np.mean(a ** 2)))
+    if rms < 1e-5:
+        return pcm
+    gain = min(target_rms / rms, max_gain)
+    a = np.clip(a * gain, -1.0, 1.0)
+    return (a * 32767).astype(np.int16).tobytes()
+
+
+def clean_for_asr(pcm: bytes) -> bytes:
+    """Full pre-ASR chain: spectral denoise + level normalization."""
+    return normalize(denoise_utterance(pcm))
+
+
 def denoise_utterance(pcm: bytes) -> bytes:
     if not config.NOISE_REDUCTION or len(pcm) < config.SAMPLE_RATE:
         return pcm
