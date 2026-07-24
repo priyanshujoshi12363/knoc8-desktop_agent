@@ -6,6 +6,7 @@ from tools import (
     keyboard,
     mouse,
     notification,
+    settings_tool,
     system,
     terminal,
     wait,
@@ -25,6 +26,7 @@ REGISTRY: dict[str, dict[str, Action]] = {
     "notification": notification.ACTIONS,
     "system": system.ACTIONS,
     "wait": wait.ACTIONS,
+    "settings": settings_tool.ACTIONS,
 }
 
 

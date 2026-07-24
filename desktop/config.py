@@ -58,6 +58,8 @@ CHROME_PROFILE: str = os.getenv("KNOC8_CHROME_PROFILE", "")
 
 NOISE_REDUCTION: bool = os.getenv("KNOC8_NOISE_REDUCTION", "1") != "0"
 
+SETTINGS_PORT: int = int(os.getenv("KNOC8_SETTINGS_PORT", "8733"))
+
 MAX_PLAN_STEPS: int = 20
 ASSISTANT_NAME: str = "Knoc8"
 
