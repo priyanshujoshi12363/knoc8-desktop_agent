@@ -4,8 +4,13 @@ from pathlib import Path
 ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 SCHEMA = [
+    ("KNOC8_LLM_PROVIDER", "LLM provider (ollama / anthropic / openai)", "ollama"),
     ("OLLAMA_API_KEY", "Ollama Cloud API key", ""),
-    ("KNOC8_LLM_MODEL", "LLM model on Ollama Cloud", "minimax-m3"),
+    ("KNOC8_LLM_MODEL", "Ollama model", "minimax-m3"),
+    ("ANTHROPIC_API_KEY", "Anthropic (Claude) API key", ""),
+    ("KNOC8_ANTHROPIC_MODEL", "Claude model", "claude-opus-4-8"),
+    ("OPENAI_API_KEY", "OpenAI API key", ""),
+    ("KNOC8_OPENAI_MODEL", "OpenAI model", "gpt-4o"),
     ("KNOC8_SERIAL_PORT", "ESP32 COM port", "COM17"),
     ("KNOC8_SERIAL_BAUD", "Serial baud rate", "921600"),
     ("KNOC8_WAKE_WORD", "Wake word phrase", "hey agent"),

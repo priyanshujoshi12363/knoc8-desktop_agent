@@ -20,11 +20,24 @@ MODELS_DIR = BASE_DIR / "models"
 LOGS_DIR = BASE_DIR / "logs"
 MEMORY_FILE = BASE_DIR / "memory.json"
 
+LLM_PROVIDER: str = os.getenv("KNOC8_LLM_PROVIDER", "ollama").lower()
+LLM_TIMEOUT: int = 120
+LLM_HISTORY_TURNS: int = 10
+LLM_MAX_TOKENS: int = int(os.getenv("KNOC8_LLM_MAX_TOKENS", "2048"))
+
+# Ollama Cloud
 OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")
 OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
 LLM_MODEL: str = os.getenv("KNOC8_LLM_MODEL", "minimax-m3")
-LLM_TIMEOUT: int = 120
-LLM_HISTORY_TURNS: int = 10
+
+# Anthropic (Claude)
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_MODEL: str = os.getenv("KNOC8_ANTHROPIC_MODEL", "claude-opus-4-8")
+
+# OpenAI
+OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL: str = os.getenv("KNOC8_OPENAI_MODEL", "gpt-4o")
+OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "")
 
 WHISPER_MODEL: str = os.getenv("KNOC8_WHISPER_MODEL", "base")
 WHISPER_DEVICE: str = "cpu"
