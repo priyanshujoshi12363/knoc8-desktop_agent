@@ -26,6 +26,10 @@ as: powershell -Command "Start-Process cmd -ArgumentList '/c <command>' -Verb Ru
 (Windows shows the user a UAC confirmation).
 - You can open/close any installed application, control keyboard and mouse, \
 manage files, windows, volume, and more.
+- For REAL SOFTWARE WORK you have the coding tool, which hands the job to a \
+dedicated coding agent that writes the files, installs packages, runs the \
+build and fixes its own errors in a loop. Use it instead of writing source \
+code yourself.
 
 # Stored memory
 {facts}
@@ -56,6 +60,10 @@ Reply ONLY with a single JSON object, no other text:
   ]
 }}
 
+"tool" is ONLY the tool group name (for example "filesystem") and "action" is \
+ONLY the action name (for example "create_folder"). NEVER join them with dots \
+inside one field.
+
 Rules:
 - You are a friendly companion, not just a command executor. For greetings \
 and small talk ("hello", "how are you", "thank you"), chat naturally and \
@@ -65,7 +73,7 @@ warmly with "plan": []. Reference recent activity or memory when relevant.
 word", or "configure you", call settings.open (it opens a web panel in the browser).
 - BE DECISIVE. The user is speaking, so transcripts may be imperfect — infer \
 the obvious intent and act. Pick sensible defaults for names and paths \
-instead of asking (e.g. "a folder on D" -> D:\\NewFolder unless context says \
+instead of asking (e.g. "a folder on D" -> D:\\\\NewFolder unless context says \
 otherwise; "run the server" -> npm run dev in the current project).
 - Only ask a question when the request is truly ambiguous, using "plan": [] \
 and putting the question in "reply".
@@ -86,6 +94,17 @@ user says "open terminal and run X", just run X with terminal.run and report \
 the result. Only open the Terminal app if the user explicitly wants a window \
 to work in themselves, or use terminal.run_background for long-running \
 servers they should see.
+- BUILDING SOFTWARE: any request to build, make, create, code or program an \
+app, website, script, API, bot or project goes to coding.build with a clear \
+one-sentence task and a sensible directory, for example coding.build( \
+task="react todo app with dark mode", directory="D:\\\\projects\\\\todo-app"). \
+To change an EXISTING project use coding.continue_task. NEVER write source \
+code with filesystem.create_file - you can only emit tiny files and you \
+cannot see build errors, so real code must go through the coding tool. \
+filesystem.create_file is only for small text or config files.
+- The coding agent runs in its own terminal window and keeps working after \
+your plan finishes. Say that it has started; do not claim the app is \
+finished and do not add wait steps for it.
 - If a folder or file already exists, do not fail — use it, or pick a \
 different name.
 - For terminal work, chain steps: cd first, then run commands one per step.
@@ -104,7 +123,7 @@ class Planner:
         user_text: str,
         confirm: Callable[[str], bool],
         on_status: Callable[[str], None] = lambda s: None,
-        on_step: Callable[[str], None] = lambda s: None,
+        on_step: Callable[[str, str, str, str], None] = lambda *a: None,
     ) -> str:
         start = time.time()
         self.awaiting_reply = False
@@ -130,8 +149,6 @@ class Planner:
         self.memory.add_turn("assistant", json.dumps(parsed, ensure_ascii=False))
 
         if not plan:
-            # A chat-only reply that contains a question means Knoc8 is asking
-            # the user something — open the mic for the answer, no wake word.
             self.awaiting_reply = "?" in reply
             log.info("Chat-only reply (%.1fs)%s", time.time() - start,
                      " [awaiting answer]" if self.awaiting_reply else "")
@@ -141,7 +158,8 @@ class Planner:
         results = self._execute(plan[: config.MAX_PLAN_STEPS], confirm, on_step)
 
         summary = self._summarize(user_text, results, fallback=reply)
-        ok = not any("ERROR" in r or "FAILED" in r or "DENIED" in r for r in results)
+        ok = not any("ERROR" in r or "FAILED" in r or "DENIED" in r
+                     or "unknown tool" in r for r in results)
         self.memory.log_activity(
             f'"{user_text}" -> {"done" if ok else "had problems"}: {summary[:120]}'
         )
@@ -180,49 +198,68 @@ class Planner:
                     return data
             except json.JSONDecodeError:
                 pass
-        # Model answered in plain text (e.g. a clarifying question) — speak it.
         if raw:
             return {"reply": raw[:400], "plan": []}
         return None
+
+    @staticmethod
+    def _normalize(tool: str, action: str) -> tuple[str, str]:
+        """Repair 'filesystem.create_folder' / 'create_folder.create_folder' style names."""
+        tool = tool.strip().lower().replace(" ", "_")
+        action = action.strip().lower().replace(" ", "_")
+        if "." in tool:
+            head, _, rest = tool.partition(".")
+            tool = head
+            if not action:
+                action = rest
+        if "." in action:
+            action = action.split(".")[-1]
+        return tool, action
 
     def _execute(
         self,
         plan: list[dict],
         confirm: Callable[[str], bool],
-        on_step: Callable[[str], None] = lambda s: None,
+        on_step: Callable[[str, str, str, str], None] = lambda *a: None,
     ) -> list[str]:
         results: list[str] = []
         for i, step in enumerate(plan, 1):
-            tool = str(step.get("tool", ""))
-            action_name = str(step.get("action", ""))
+            raw_tool = str(step.get("tool", ""))
+            raw_action = str(step.get("action", ""))
+            tool, action_name = self._normalize(raw_tool, raw_action)
             args = step.get("args") or {}
             label = f"step {i}: {tool}.{action_name}({args})"
             log.info("Executing %s", label)
             detail = str(next(iter(args.values()), "")).strip()
-            on_step(f"{action_name}: {detail}" if detail else f"{tool}.{action_name}")
+            on_step(tool, action_name, detail, "run")
 
             action = self._resolve(tool, action_name)
             if action is None:
+                log.warning("Unknown tool/action %r / %r (raw: %r / %r). Catalogue:\n%s",
+                            tool, action_name, raw_tool, raw_action,
+                            tools.describe_tools()[:1500])
                 results.append(f"{label} -> unknown tool/action, skipped")
+                on_step(tool, action_name, "unknown tool/action", "skip")
                 continue
 
             gate = self._gate(tool, action, args)
-            # Safe Mode ON  -> ask before anything risky.
-            # Safe Mode OFF -> run risky commands freely, but truly destructive
-            #                  ("block" class) still always asks.
             need_confirm = gate == "block" or (gate == "confirm" and config.SAFE_MODE)
             if need_confirm:
                 prompt = self._confirm_text(tool, action_name, args, gate)
                 if not confirm(prompt):
                     results.append(f"{label} -> DENIED by user")
                     log.warning("User denied %s", label)
+                    on_step(tool, action_name, detail, "denied")
                     continue
 
             try:
                 outcome = action.run(**args)
+                failed = str(outcome).startswith(("ERROR", "FAILED"))
             except Exception as exc:
                 outcome = f"ERROR: {exc}"
+                failed = True
                 log.error("%s failed: %s", label, exc)
+            on_step(tool, action_name, detail, "fail" if failed else "ok")
             results.append(f"{label} -> {outcome}")
         return results
 
@@ -238,7 +275,6 @@ class Planner:
 
     @staticmethod
     def _gate(tool: str, action: Action, args: dict) -> str:
-        """Return 'safe', 'confirm', or 'block' for a proposed action."""
         if tool == "terminal":
             command = str(args.get("command", ""))
             return terminal.classify(command) if command else "safe"

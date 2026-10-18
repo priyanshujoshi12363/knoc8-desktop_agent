@@ -11,17 +11,17 @@ SCHEMA = [
     ("KNOC8_ANTHROPIC_MODEL", "Claude model", "claude-opus-4-8"),
     ("OPENAI_API_KEY", "OpenAI API key", ""),
     ("KNOC8_OPENAI_MODEL", "OpenAI model", "gpt-4o"),
-    ("KNOC8_SERIAL_PORT", "ESP32 COM port", "COM17"),
+    ("KNOC8_SERIAL_PORT", "ESP32 COM port", "COM5"),
     ("KNOC8_SERIAL_BAUD", "Serial baud rate", "921600"),
-    ("KNOC8_WAKE_WORD", "Wake word phrase", "hey agent"),
-    ("KNOC8_WAKE_MODEL", "Whisper model for wake word (tiny/base)", "tiny"),
     ("KNOC8_WHISPER_MODEL", "Whisper model for commands (tiny/base/small)", "base"),
-    ("KNOC8_MIC_THRESHOLD", "Mic energy threshold for speech (lower = more sensitive)", "300"),
-    ("KNOC8_SILENCE_MS", "Silence ms that ends a command", "1200"),
+    ("KNOC8_WHISPER_DEVICE", "Whisper device (auto/cpu/cuda)", "auto"),
+    ("KNOC8_MAX_HOLD_MS", "Maximum hold length (ms)", "30000"),
     ("KNOC8_TTS_RATE", "Voice speed (words per minute)", "175"),
     ("KNOC8_CHROME_PROFILE", "Default Chrome profile (empty = ask by voice)", ""),
+    ("KNOC8_CODING_AGENT", "Coding agent (blank = auto-detect)", ""),
     ("KNOC8_NOISE_REDUCTION", "Noise cancellation (1 = on, 0 = off)", "1"),
     ("KNOC8_SAFE_MODE", "Safe Mode: ask before destructive actions (1 = on, 0 = off)", "1"),
+    ("KNOC8_PAUSED", "Pause agent (1 = paused, frees the COM port for flashing)", "1"),
 ]
 
 

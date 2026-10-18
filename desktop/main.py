@@ -4,6 +4,8 @@ import time
 import serial
 
 import config
+import ui
+from capture import HoldCapture
 from llm import create_provider
 from logger import get_logger
 from memory import Memory
@@ -18,99 +20,93 @@ log = get_logger("main")
 class Knoc8:
     def __init__(self) -> None:
         log.info("Starting %s Desktop Agent...", config.ASSISTANT_NAME)
+        ui.section("Starting up")
+
         self.memory = Memory()
-        self.planner = Planner(create_provider(), self.memory)
+        ui.setup_step("Memory", f"{len(self.memory.facts)} facts, "
+                                f"{len(self.memory.journal)} journal entries")
+
+        with ui.task("AI provider") as t:
+            provider = create_provider()
+            t.update(f"{config.LLM_PROVIDER} - {getattr(provider, 'model', '?')}")
+        self.planner = Planner(provider, self.memory)
+
         self.stt = SpeechToText()
+        with ui.task("Speech model") as t:
+            t.update(f"whisper {config.WHISPER_MODEL} - first run downloads it")
+            self.stt.preload()
+            t.update(f"whisper {config.WHISPER_MODEL} on {self.stt.device}")
+
         self.tts = TextToSpeech()
         self.serial = SerialManager()
 
+    # ------------------------------------------------------------------ run
+
     def run(self) -> None:
-        if self.serial.connect():
+        with ui.task("Device") as t:
+            connected = self.serial.connect()
+            t.update(self.serial.port if connected else "not found - text mode")
+        if connected:
             self._hardware_loop()
         else:
-            log.warning("ESP32 not found on %s — falling back to text mode.",
+            log.warning("ESP32 not found on %s - falling back to text mode.",
                         config.SERIAL_PORT)
             self._text_loop()
 
-    def _hardware_loop(self) -> None:
-        from audio_dsp import HighPassFilter, denoise_utterance
-        from wake_word import UtteranceCapture, WakeWordDetector
+    # -------------------------------------------------------- hardware loop
 
-        wake = WakeWordDetector()
-        capture = UtteranceCapture()
+    def _hardware_loop(self) -> None:
+        from audio_dsp import HighPassFilter, clean_for_asr
+
+        capture = HoldCapture()
         highpass = HighPassFilter()
         self._highpass = highpass
-        listening = False
+        recording = False
 
         self.serial.send_status("IDLE")
-        log.info("Hardware mode active. Say '%s' to start.", config.WAKE_WORD_PHRASE)
+        ui.ready("Hold the button, speak, then let go")
+        log.info("Hold-to-talk active on %s.", self.serial.port)
+
         try:
             while True:
                 event = self.serial.poll()
                 if event is None:
+                    time.sleep(0.002)          # don't spin a core
                     continue
                 kind, payload = event
+
                 if kind == "line":
-                    if str(payload).startswith("LOG:"):
-                        log.debug("ESP32 %s", payload)
-                    continue
-
-                payload = highpass.process(payload)
-
-                if not listening:
-                    if wake.feed(payload):
-                        listening = True
+                    line = str(payload)
+                    if line.startswith("LOG:"):
+                        log.debug("ESP32 %s", line)
+                    elif line.startswith("BUTTON:DOWN"):
+                        recording = True
                         capture.reset()
                         self.serial.send_status("LISTENING")
+                        ui.listening()
+                    elif line.startswith("BUTTON:UP"):
+                        if not recording:
+                            continue
+                        recording = False
+                        self._finish_recording(capture, clean_for_asr)
                     continue
 
-                audio = capture.feed(payload)
-                if audio is None:
-                    continue
-                listening = False
-                if not audio:
-                    self.serial.send_status("IDLE")
+                if not recording:
                     continue
 
-                self.serial.send_status("THINKING")
-                text = self.stt.transcribe(denoise_utterance(audio))
-                if not text:
-                    self.serial.drain()
-                    self.serial.send_status("IDLE")
-                    continue
-                print(f"\nYou said: {text}")
-                reply = self.planner.handle(
-                    text,
-                    confirm=self._confirm,
-                    on_status=self.serial.send_status,
-                    on_step=self.serial.send_step,
-                )
-                print(f"{config.ASSISTANT_NAME}: {reply}")
-                self.serial.send_status("SPEAKING")
-                self.serial.drain()
-                wake.reset()
-                interrupted = self._speak_interruptible(reply, wake, highpass)
-                if interrupted:
-                    log.info("Interrupted by wake word — listening.")
-                    listening = True
-                    capture.reset()
-                    self.serial.drain()
-                    self.serial.send_status("LISTENING")
-                elif self.planner.awaiting_reply:
-                    log.info("Knoc8 asked a question — listening for your answer "
-                             "(no wake word needed).")
-                    listening = True
-                    capture.reset()
-                    self.serial.drain()
-                    self.serial.send_status("LISTENING")
-                else:
-                    self.serial.send_status("IDLE")
-                    log.info("Ready — say '%s' for the next command.",
-                             config.WAKE_WORD_PHRASE)
+                if not capture.feed(highpass.process(payload)):
+                    # held past the maximum — cut it off ourselves
+                    recording = False
+                    self.serial.send_rec_stop()
+                    ui.warn(f"Maximum hold reached ({config.MAX_HOLD_MS // 1000}s)")
+                    self._finish_recording(capture, clean_for_asr)
+
         except KeyboardInterrupt:
             log.info("Shutting down.")
+            ui.bye()
         except serial.SerialException as exc:
-            log.warning("ESP32 disconnected (%s) — exiting.", exc)
+            log.warning("ESP32 disconnected (%s) - exiting.", exc)
+            ui.warn("Device disconnected.")
         finally:
             try:
                 self.serial.send_status("IDLE")
@@ -118,25 +114,110 @@ class Knoc8:
                 pass
             self.serial.close()
 
+    def _finish_recording(self, capture, denoise) -> None:
+        """Button released (or max hold hit) — validate and process the audio."""
+        note = capture.level_note()
+        too_short = capture.too_short
+        too_quiet = capture.too_quiet
+        audio = capture.finish()
+        capture.reset()
+
+        if not audio:
+            self.serial.send_status("IDLE")
+            ui.cancelled("No audio arrived from the device — check the mic wiring")
+            return
+        if too_short:
+            self.serial.send_status("IDLE")
+            ui.cancelled(f"Too short ({note}) — hold the button while you speak")
+            return
+        if too_quiet:
+            # Still transcribe it, but say plainly that the mic is near-silent.
+            ui.warn(f"Mic level very low ({note})")
+
+        self._handle_utterance(audio, denoise, note)
+        self.serial.send_status("IDLE")
+
+    def _handle_utterance(self, audio: bytes, denoise, note: str = "") -> None:
+        self.serial.send_status("THINKING")
+        ui.thinking_start()
+        try:
+            text = self.stt.transcribe(denoise(audio))
+        except Exception as exc:
+            # One bad transcription must never kill the agent.
+            log.error("Transcription failed: %s", exc, exc_info=True)
+            ui.error(f"Speech recognition failed: {exc}")
+            return
+        finally:
+            ui.thinking_stop()
+
+        if not text:
+            self.serial.drain()
+            ui.cancelled(f"Couldn't make that out ({note})" if note
+                         else "Couldn't make that out")
+            return
+
+        ui.heard(text)
+        if note:
+            ui.info(note)
+        ui.thinking_start()
+        try:
+            reply = self.planner.handle(
+                text,
+                confirm=self._confirm,
+                on_status=self.serial.send_status,
+                on_step=self._on_step,
+            )
+        finally:
+            ui.thinking_stop()
+
+        ui.reply(reply)
+        self.serial.send_status("SPEAKING")
+        self.serial.drain()
+        if self._speak_interruptible(reply):
+            log.info("Interrupted by button.")
+            ui.info("interrupted")
+        elif self.planner.awaiting_reply:
+            ui.info("hold the button to answer")
+
+    def _on_step(self, tool: str, action: str, detail: str, state: str) -> None:
+        if state == "run":
+            self.serial.send_step(f"{action}: {detail}" if detail else action)
+        ui.step(tool, action, detail, state)
+
+    # ------------------------------------------------------------ text mode
+
     def _text_loop(self) -> None:
-        print(f"\n{config.ASSISTANT_NAME} text mode — type a command, 'quit' to exit.\n")
+        ui.ready("type a command below, or 'quit' to exit")
         while True:
             try:
-                text = input("You: ").strip()
+                text = input("  > ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
             if not text:
                 continue
             if text.lower() in {"quit", "exit"}:
                 break
-            reply = self.planner.handle(text, confirm=self._confirm)
-            print(f"{config.ASSISTANT_NAME}: {reply}\n")
+            ui.thinking_start()
+            try:
+                reply = self.planner.handle(
+                    text, confirm=self._confirm, on_step=self._on_step_text)
+            finally:
+                ui.thinking_stop()
+            ui.reply(reply)
             try:
                 self.tts.speak_local(reply)
             except Exception as exc:
                 log.warning("Local TTS failed: %s", exc)
+        ui.bye()
 
-    def _speak_interruptible(self, text: str, wake, highpass) -> bool:
+    @staticmethod
+    def _on_step_text(tool: str, action: str, detail: str, state: str) -> None:
+        ui.step(tool, action, detail, state)
+
+    # ---------------------------------------------------------------- speech
+
+    def _speak_interruptible(self, text: str) -> bool:
+        """Speak, watching for a button press to cut it off."""
         try:
             proc = self.tts.speak_local_async(text)
         except Exception as exc:
@@ -149,8 +230,7 @@ class Knoc8:
             if event is None:
                 time.sleep(0.005)
                 continue
-            kind, payload = event
-            if kind == "chunk" and wake.feed(highpass.process(payload), eager=True):
+            if event[0] == "line" and str(event[1]).startswith("BUTTON:DOWN"):
                 proc.kill()
                 interrupted = True
                 break
@@ -158,59 +238,37 @@ class Knoc8:
             proc.kill()
         return interrupted
 
+    # --------------------------------------------------------------- confirm
+
     def _confirm(self, description: str) -> bool:
         import confirm as confirm_mod
 
-        poll = self._voice_decision_poll() if self.serial.connected else None
+        ui.warn("Confirmation required - check the popup")
         if self.serial.connected:
             try:
                 self.tts.speak_local_async(
-                    "Please confirm. Say confirm to allow, or cancel."
+                    "Please confirm. Click yes to allow, or no to cancel."
                 )
             except Exception:
                 pass
-        decided = confirm_mod.confirm(
-            description, timeout=config.CONFIRM_TIMEOUT, poll=poll
-        )
+        decided = confirm_mod.confirm(description, timeout=config.CONFIRM_TIMEOUT)
         if self.serial.connected:
             self.serial.drain()
+        ui.info("allowed" if decided else "denied")
         return decided
-
-    def _voice_decision_poll(self):
-        """Returns a poll() that transcribes short mic audio into yes/no."""
-        buf = bytearray()
-        clock = [time.time()]
-        need = config.SAMPLE_RATE * config.SAMPLE_WIDTH * 1.3
-        yes = ("confirm", "yes", "yeah", "yep", "allow", "do it", "okay", "ok")
-        no = ("cancel", "no", "nope", "stop", "don't", "dont")
-
-        def poll():
-            event = self.serial.poll()
-            if event and event[0] == "chunk":
-                buf.extend(self._highpass.process(event[1]))
-            if len(buf) >= need or (time.time() - clock[0] > 1.3 and buf):
-                audio = bytes(buf)
-                buf.clear()
-                clock[0] = time.time()
-                text = self.stt.transcribe(audio).lower()
-                if not text:
-                    return None
-                if any(w in text for w in yes):
-                    return "yes"
-                if any(w in text for w in no):
-                    return "no"
-            return None
-
-        return poll
 
 
 if __name__ == "__main__":
     try:
+        ui.banner()
         from bootstrap import needs_setup, run_first_time_setup
 
         if needs_setup():
             run_first_time_setup()
         Knoc8().run()
+    except KeyboardInterrupt:
+        ui.bye()
     except Exception as exc:
         log.critical("Fatal error: %s", exc, exc_info=True)
+        ui.error(f"Fatal error: {exc}")
         sys.exit(1)

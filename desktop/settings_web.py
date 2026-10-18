@@ -25,8 +25,7 @@ _HELP_LINKS = {
 FIELDS = [
     ("General", "KNOC8_LLM_PROVIDER", "LLM provider", "select",
      ["ollama", "anthropic", "openai"], "ollama", False),
-    ("General", "KNOC8_WAKE_WORD", "Wake word", "text", None, "hey agent", False),
-    ("General", "KNOC8_SERIAL_PORT", "ESP32 COM port", "text", None, "COM17", False),
+    ("General", "KNOC8_SERIAL_PORT", "ESP32 COM port", "text", None, "COM5", False),
     ("General", "KNOC8_SERIAL_BAUD", "Serial baud rate", "number", None, "921600", False),
 
     ("Ollama", "OLLAMA_API_KEY", "Ollama Cloud API key", "password", None, "", True),
@@ -47,15 +46,24 @@ FIELDS = [
       "o3-mini"], "gpt-4o", False),
     ("OpenAI", "OPENAI_BASE_URL", "OpenAI base URL (optional)", "text", None, "", False),
 
-    ("Voice & Audio", "KNOC8_WHISPER_MODEL", "Whisper model (tiny/base/small)", "text", None, "base", False),
+    ("Voice & Audio", "KNOC8_WHISPER_MODEL", "Whisper model", "model",
+     ["tiny", "base", "small", "medium"], "base", False),
+    ("Voice & Audio", "KNOC8_WHISPER_DEVICE", "Whisper device", "select",
+     ["auto", "cpu", "cuda"], "auto", False),
     ("Voice & Audio", "KNOC8_TTS_RATE", "Voice speed (words/min)", "number", None, "175", False),
-    ("Voice & Audio", "KNOC8_MIC_THRESHOLD", "Mic sensitivity (lower = more sensitive)", "number", None, "300", False),
-    ("Voice & Audio", "KNOC8_SILENCE_MS", "Silence that ends a command (ms)", "number", None, "1200", False),
+    ("Voice & Audio", "KNOC8_MAX_HOLD_MS", "Maximum hold length (ms)", "number", None, "30000", False),
     ("Voice & Audio", "KNOC8_NOISE_REDUCTION", "Noise cancellation (1 on / 0 off)", "text", None, "1", False),
 
     ("Browser", "KNOC8_CHROME_PROFILE", "Default Chrome profile (blank = ask)", "text", None, "", False),
 
+    ("Coding", "KNOC8_CODING_AGENT", "Coding agent (blank = auto-detect)", "model",
+     ["", "claude", "cursor-agent", "aider", "codex", "gemini"], "", False),
+
     ("Safety", "KNOC8_SAFE_MODE", "Safe Mode — ask before delete / shutdown / risky commands", "toggle", None, "1", False),
+
+    ("Developer", "KNOC8_PAUSED",
+     "Pause Knoc8 - releases the COM port so you can flash the ESP32",
+     "toggle", None, "0", False),
 ]
 
 _server: ThreadingHTTPServer | None = None

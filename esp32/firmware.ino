@@ -1,3 +1,9 @@
+// Knoc8 Desktop Agent — ESP32-C3 firmware
+// Hold-to-talk button + I2S mic streaming + animated OLED face.
+//
+// The mic is ONLY transmitted while the button is physically held down.
+// When idle, audio is read and discarded so the I2S buffer never goes stale.
+
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -16,6 +22,9 @@
 #define OLED_HEIGHT     64
 #define OLED_ADDR       0x3C
 
+#define BUTTON_PIN      3       // momentary switch: GPIO3 -> button -> GND
+#define DEBOUNCE_MS     40
+
 #define CHUNK_SAMPLES   512
 
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
@@ -30,6 +39,11 @@ enum FaceState { FACE_BOOT, FACE_IDLE, FACE_LISTEN, FACE_THINK, FACE_WORK, FACE_
 FaceState face = FACE_BOOT;
 char stepText[24] = "";
 
+bool streaming = false;
+bool lastRaw = HIGH;          // last raw pin read (may be bouncing)
+bool buttonState = HIGH;      // debounced, accepted state
+unsigned long lastDebounce = 0;
+
 unsigned long lastFrame = 0;
 unsigned long nextBlink = 2500;
 unsigned long blinkStart = 0;
@@ -37,6 +51,8 @@ bool blinking = false;
 int lookX = 0;
 unsigned long nextLook = 4000;
 uint8_t animPhase = 0;
+
+// ---------------------------------------------------------------- face
 
 void drawEyePair(int w, int h, int y, int dx, int r) {
   int lx = 40 - w / 2 + dx;
@@ -83,7 +99,7 @@ void drawFace() {
     case FACE_IDLE: {
       int h = blinkedHeight(26);
       drawEyePair(26, h, 14 + (26 - h) / 2, lookX, 8);
-      drawStatusLine("say  hey agent");
+      drawStatusLine("hold to talk");
       break;
     }
     case FACE_LISTEN: {
@@ -135,13 +151,29 @@ void updateFace() {
   drawFace();
 }
 
+void setFace(FaceState f) {
+  if (face != f) {
+    face = f;
+    animPhase = 0;
+    if (f != FACE_WORK) stepText[0] = '\0';
+    drawFace();
+  }
+}
+
+// ---------------------------------------------------------------- mic
+
 void setupMic() {
   i2s.setPins(MIC_SCK_PIN, MIC_WS_PIN, -1, MIC_SD_PIN, -1);
   i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_32BIT,
             I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT);
 }
 
-void streamMicChunk() {
+// Reads the mic ONLY while streaming.  i2s.readBytes() blocks for a full
+// buffer (~32 ms), so calling it while idle would throttle the whole loop and
+// make the button feel unresponsive.  The DMA buffer is flushed on press
+// instead, which also drops any stale pre-press audio.
+void serviceMic() {
+  if (!streaming) return;
   size_t bytesRead = i2s.readBytes((char *)micRaw, sizeof(micRaw));
   int samples = bytesRead / sizeof(int32_t);
   if (samples <= 0) return;
@@ -156,20 +188,51 @@ void streamMicChunk() {
   Serial.write((uint8_t *)pcm, nBytes);
 }
 
-void setFace(FaceState f) {
-  if (face != f) {
-    face = f;
-    animPhase = 0;
-    if (f != FACE_WORK) stepText[0] = '\0';
+// Throw away whatever the I2S DMA buffered while we were idle.
+void flushMic() {
+  for (int i = 0; i < 4 && i2s.available() > 0; i++) {
+    i2s.readBytes((char *)micRaw, sizeof(micRaw));
   }
 }
+
+// ---------------------------------------------------------------- button
+
+// Stable-state debounce: the level must hold steady for DEBOUNCE_MS before it
+// counts.  The previous version compared against the last ACCEPTED state, so a
+// switch that bounced for longer than the window could emit a phantom release
+// a few ms after the press.
+void pollButton() {
+  bool raw = digitalRead(BUTTON_PIN);
+  unsigned long now = millis();
+
+  if (raw != lastRaw) {              // still settling - restart the timer
+    lastRaw = raw;
+    lastDebounce = now;
+    return;
+  }
+  if (now - lastDebounce < DEBOUNCE_MS) return;   // not stable long enough
+  if (raw == buttonState) return;                 // no change once settled
+
+  buttonState = raw;
+  if (raw == LOW) {                  // pressed  (INPUT_PULLUP -> active low)
+    flushMic();                      // drop stale audio from the DMA buffer
+    streaming = true;                // stream BEFORE announcing it
+    Serial.print("BUTTON:DOWN\n");
+    setFace(FACE_LISTEN);            // instant feedback, don't wait for the PC
+  } else {                           // released
+    streaming = false;               // stop first so no chunk follows BUTTON:UP
+    Serial.print("BUTTON:UP\n");
+  }
+}
+
+// ---------------------------------------------------------------- serial
 
 void handleLine(const String &line) {
   if (line.startsWith("STATUS:")) {
     String s = line.substring(7);
-    if (s == "IDLE")           setFace(FACE_IDLE);
+    if (s == "IDLE")           { streaming = false; setFace(FACE_IDLE); }
     else if (s == "LISTENING") setFace(FACE_LISTEN);
-    else if (s == "THINKING")  setFace(FACE_THINK);
+    else if (s == "THINKING")  { streaming = false; setFace(FACE_THINK); }
     else if (s == "EXECUTING") setFace(FACE_WORK);
     else if (s == "SPEAKING")  setFace(FACE_SPEAK);
   } else if (line.startsWith("STEP:")) {
@@ -177,6 +240,8 @@ void handleLine(const String &line) {
     s.trim();
     strncpy(stepText, s.c_str(), sizeof(stepText) - 1);
     stepText[sizeof(stepText) - 1] = '\0';
+  } else if (line.startsWith("REC:STOP")) {
+    streaming = false;
   }
 }
 
@@ -193,8 +258,18 @@ void pollSerial() {
   }
 }
 
+// ---------------------------------------------------------------- main
+
 void setup() {
   Serial.begin(SERIAL_BAUD);
+  // On native USB CDC, Serial.write() BLOCKS when no host is draining the
+  // port - which freezes the whole loop (dead button, frozen face, no data).
+  // 0 = never block; bytes are dropped instead when nobody is listening.
+  Serial.setTxTimeoutMs(0);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  lastRaw = digitalRead(BUTTON_PIN);
+  buttonState = lastRaw;
 
   Wire.begin(OLED_SDA_PIN, OLED_SCL_PIN);
   Wire.setClock(400000);
@@ -209,6 +284,7 @@ void setup() {
 
 void loop() {
   pollSerial();
-  streamMicChunk();
+  pollButton();
+  serviceMic();
   updateFace();
 }

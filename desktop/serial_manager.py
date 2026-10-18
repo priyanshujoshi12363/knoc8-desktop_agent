@@ -10,6 +10,10 @@ log = get_logger("serial")
 
 _ESP32_VIDS = {0x10C4, 0x1A86, 0x0403, 0x303A}
 
+_SYNC0 = 0xAA
+_SYNC1 = 0x55
+_MAX_FRAME = 4096
+
 
 class SerialManager:
     def __init__(
@@ -30,6 +34,7 @@ class SerialManager:
                 )
                 time.sleep(2.0)
                 self.conn.reset_input_buffer()
+                self._buffer.clear()
                 self.port = candidate
                 log.info("Connected to ESP32 on %s @ %d baud", candidate, self.baudrate)
                 return True
@@ -62,53 +67,61 @@ class SerialManager:
     def send_step(self, text: str) -> None:
         self.send_line(f"STEP:{text[:38]}")
 
+    def send_rec_stop(self) -> None:
+        self.send_line("REC:STOP")
+
     def send_status(self, status: str) -> None:
         log.debug("STATUS -> %s", status)
         self.send_line(f"STATUS:{status}")
 
+    def _fill(self) -> None:
+        waiting = self.conn.in_waiting if self.connected else 0
+        if waiting:
+            self._buffer.extend(self.conn.read(waiting))
+
     def poll(self) -> tuple[str, object] | None:
-        line = self._read_line()
-        if line is None:
-            return None
-        idx = line.rfind("CHUNK:")
-        if idx != -1:
-            try:
-                size = int(line[idx + 6:])
-            except ValueError:
+        """Return ("chunk", pcm_bytes) or ("line", text), or None if nothing complete yet.
+
+        Audio arrives as frames: 0xAA 0x55 <len lo> <len hi> <PCM>.
+        Everything else is newline-terminated ASCII text. A damaged frame can
+        no longer swallow text lines like BUTTON:UP.
+        """
+        self._fill()
+        buf = self._buffer
+        while buf:
+            if buf[0] == _SYNC0:
+                if len(buf) < 4:
+                    return None
+                if buf[1] != _SYNC1:
+                    del buf[0]
+                    continue
+                n = buf[2] | (buf[3] << 8)
+                if n == 0 or n > _MAX_FRAME or n % 2:
+                    del buf[:2]                      # bogus header, resync
+                    continue
+                if len(buf) < 4 + n:
+                    return None                      # frame not complete yet
+                data = bytes(buf[4:4 + n])
+                del buf[:4 + n]
+                return ("chunk", data)
+
+            nl = buf.find(b"\n")
+            sync = buf.find(bytes([_SYNC0]))
+            if sync != -1 and (nl == -1 or sync < nl):
+                del buf[:sync]                       # junk before a frame start
+                continue
+            if nl == -1:
+                if len(buf) > 512:
+                    buf.clear()                      # runaway junk
                 return None
-            return ("chunk", self._read_exact(size))
-        return ("line", line)
+            raw = bytes(buf[:nl])
+            del buf[:nl + 1]
+            text = raw.decode("ascii", errors="replace").strip()
+            if text:
+                return ("line", text)
+        return None
 
     def drain(self) -> None:
         if self.connected:
             self.conn.reset_input_buffer()
         self._buffer.clear()
-
-    def _read_line(self, timeout: float = 0.0) -> str | None:
-        deadline = time.time() + timeout
-        while True:
-            newline = self._buffer.find(b"\n")
-            if newline != -1:
-                raw = self._buffer[:newline]
-                del self._buffer[: newline + 1]
-                return raw.decode("ascii", errors="replace").strip()
-            waiting = self.conn.in_waiting if self.connected else 0
-            if waiting:
-                self._buffer.extend(self.conn.read(waiting))
-                continue
-            if time.time() >= deadline:
-                return None
-            time.sleep(0.005)
-
-    def _read_exact(self, n: int, timeout: float = 5.0) -> bytes:
-        deadline = time.time() + timeout
-        while len(self._buffer) < n and time.time() < deadline:
-            waiting = self.conn.in_waiting
-            if waiting:
-                self._buffer.extend(self.conn.read(waiting))
-            else:
-                time.sleep(0.005)
-        data = bytes(self._buffer[:n])
-        del self._buffer[:n]
-        return data
-

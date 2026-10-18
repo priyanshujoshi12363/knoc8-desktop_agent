@@ -76,43 +76,41 @@ def needs_setup() -> bool:
 
 
 def run_first_time_setup() -> None:
-    bar = "=" * 54
-    print(f"\n{bar}\n   Welcome to Knoc8  —  first-time setup\n{bar}\n")
+    import ui
+
+    ui.section("First-time setup")
 
     # 1) Components / dependencies
-    print("  Checking components...")
     miss = _missing()
     if miss:
-        print(f"  Downloading {len(miss)} components. This runs once and may")
-        print("  take a few minutes — please keep the device connected.\n")
-        if _install_dependencies():
+        with ui.task("Components") as t:
+            t.update(f"downloading {len(miss)} packages, this runs once")
+            ok = _install_dependencies()
             still = _missing()
-            if still:
-                print("  Some components could not be installed:",
-                      ", ".join(n for _, n in still))
-                print("  Please check your internet connection and restart.\n")
+            if not ok or still:
+                t.update("some components failed - check your connection")
             else:
-                print("  All components installed successfully.\n")
-        else:
-            print("  Download failed — check your internet connection and restart.\n")
+                t.update(f"installed {len(miss)} packages")
     else:
-        print("  All components ready.\n")
+        ui.setup_step("Components", "all present")
 
     # 2) API key via the settings panel
     if not has_api_key():
-        print("  Opening the Knoc8 settings page in your browser.")
-        print("  Choose your AI provider, paste your API key, and click Save.")
-        print("  (Each key field has a 'Get your key' link if you need one.)\n")
+        ui.setup_step("AI provider", "no API key yet", "warn")
         try:
             import settings_web
-            settings_web.launch()
+
+            url = settings_web.launch()
+            ui.info(f"Opened {url} - choose a provider, paste your key, Save.")
         except Exception as exc:
             log.error("Could not open settings: %s", exc)
-            print("  Could not open settings automatically. Run:  python settings_web.py")
-        print("  Waiting for you to save your API key...")
-        while not has_api_key():
-            time.sleep(2)
-        print("  API key saved.\n")
+            ui.error("Could not open settings. Run:  python settings_web.py")
+        with ui.task("Waiting for your API key") as t:
+            while not has_api_key():
+                time.sleep(2)
+            t.update("saved")
+    else:
+        ui.setup_step("AI provider", "API key present")
 
     FLAG.touch()
-    print(f"{bar}\n   Setup complete!  Say 'Hey Agent' to begin.\n{bar}\n")
+    ui.setup_step("Setup complete", "", "ok")
