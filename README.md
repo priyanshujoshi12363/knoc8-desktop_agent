@@ -12,6 +12,15 @@
 ![Platform](https://img.shields.io/badge/Platform-Windows-0078D4?logo=windows&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+<br>
+
+<img src="desktop/photo/image.jpeg" alt="Knoc8 final product" width="46%">
+<img src="desktop/photo/image1.jpeg" alt="Knoc8 final product" width="46%">
+&nbsp;
+<img src="desktop/photo/image2.jpeg" alt="Knoc8 OLED face close-up" width="46%">
+
+<sub>The finished Knoc8 device: ESP32-C3 + INMP441 mic + OLED face + hold-to-talk button.</sub>
+
 </div>
 
 ---
@@ -20,6 +29,19 @@
 
 > 🗣️ *(hold) "Open Chrome with my Priyanshu profile and play the song CO2 on YouTube, let it play 15 seconds, then open terminal and check the npm version."*
 > → Knoc8 does all five steps in order and reports back. 🔊 *"All done, sir. What would you like me to do next?"*
+
+---
+
+## 📸 Final Product
+
+<div align="center">
+
+| Device | Face |
+|:---:|:---:|
+| <img src="desktop/photo/image1.jpg" alt="Knoc8 device" width="100%"> | <img src="desktop/photo/image2.jpg" alt="Knoc8 face" width="100%"> |
+| 3D-printed enclosure with button, mic and OLED | Animated robot face reacting to what Knoc8 is doing |
+
+</div>
 
 ---
 
@@ -41,7 +63,8 @@
 | 🎧 **Noise cancellation** | High-pass filter + spectral denoise for cleaner recognition. |
 | 💾 **Persistent memory** | Remembers facts *and* auto-journals every task — survives restarts. |
 | 🔌 **Auto-start on plug-in** | A watcher launches the agent automatically when the ESP32 is connected. |
-| 🛠️ **Settings CLI** | `python settings.py` to tune everything, no code editing. |
+| ⏸️ **Pause mode for flashing** | One toggle releases the COM port so you can re-flash the ESP32. |
+| 🛠️ **Settings CLI + web panel** | `python settings.py` or the browser panel to tune everything, no code editing. |
 | 🛡️ **Safety gate** | Delete, shutdown, restart & risky shell commands need confirmation. |
 | 🖥️ **Live console** | A Claude-Code-style terminal shows setup, what you said, and every step as it runs. |
 | ⌨️ **Text mode fallback** | No ESP32? A console REPL runs the same brain. |
@@ -56,8 +79,6 @@
                                               High-pass filter (kills rumble/hum)
                                                                               │
                                               You release - recording stops
-                                                                              │
-                                              Mic goes quiet immediately
                                                                               │
                                               Spectral denoise ─► Whisper (local STT)
                                                                               │
@@ -87,13 +108,16 @@
 ```
 knoc8-desktop_agent/
 ├── esp32/
-│   └── firmware.ino          # Button + I2S mic streaming + animated OLED face
+│   └── firmware.ino          # Button + I2S mic streaming + animated OLED face (U8g2)
 └── desktop/
+    ├── photo/                # Product images used in this README
     ├── main.py               # Orchestrator: hold → capture → plan → execute → speak
     ├── watcher.py            # Auto-launches the agent when the ESP32 is plugged in
     ├── settings.py           # Interactive + CLI settings editor (writes .env)
+    ├── settings_web.py       # Browser settings panel
+    ├── bootstrap.py          # First-run dependency + API key setup
     ├── config.py             # All settings, loaded from .env
-    ├── serial_manager.py     # Serial protocol: chunked audio + STATUS/STEP lines
+    ├── serial_manager.py     # Serial protocol: framed audio + STATUS/STEP lines
     ├── capture.py            # Hold-to-talk capture + mic level reporting
     ├── ui.py                 # Live console: setup, transcript, per-step results
     ├── audio_dsp.py          # High-pass filter + spectral noise reduction
@@ -101,8 +125,9 @@ knoc8-desktop_agent/
     ├── text_to_speech.py     # Offline pyttsx3 TTS (isolated subprocess)
     ├── llm.py                # LLMProvider → Ollama / Claude / OpenAI
     ├── planner.py            # Prompt, JSON parsing, validation, safety, summaries
+    ├── confirm.py            # Native Yes/No confirmation popup
     ├── memory.py             # Facts + activity journal + conversation history
-    ├── logger.py             # Console + rotating file logs
+    ├── logger.py             # Console + rotating file logs (secrets redacted)
     └── tools/                # One module per capability
         ├── terminal.py       ├── applications.py   ├── browser.py
         ├── filesystem.py     ├── keyboard.py       ├── mouse.py
@@ -133,7 +158,7 @@ The LLM picks from these; Python executes them.
 | **wait** | `wait` (pause between steps, up to 300s) |
 | **memory** | `remember`, `recall` |
 
-⚠️ = requires typed confirmation before running.
+⚠️ = requires confirmation (popup Yes/No) before running.
 
 Adding a tool = one new module in `tools/` + one line in `tools/__init__.py`.
 
@@ -161,7 +186,7 @@ While working, the PC streams each action to the display, so *"make a backend st
 |---|---|
 | ESP32-C3 dev board | Voice interface (native USB serial) |
 | INMP441 | I2S microphone |
-| SSD1306 128×64 OLED | Animated face + status (I2C) |
+| SSD1306 128×64 OLED (I2C, address `0x3C`) | Animated face + status |
 | Momentary push button | Hold-to-talk trigger |
 
 ### Wiring (ESP32-C3)
@@ -186,8 +211,13 @@ Mic audio: **16 kHz · 16-bit · mono PCM** streamed over serial at **921600 bau
 ### 1 — Flash the ESP32-C3
 
 1. Open `esp32/firmware.ino` in Arduino IDE (needs the **Arduino-ESP32 core 3.x**).
-2. Install **Adafruit SSD1306** + **Adafruit GFX Library** from Library Manager.
-3. Select **ESP32C3 Dev Module** on its COM port and upload (upload speed 115200 is safest).
+2. Install **U8g2** from Library Manager.
+3. Tools settings: board **ESP32C3 Dev Module**, **USB CDC On Boot: Enabled**, upload speed **115200** (safest).
+4. Select the board's COM port and upload.
+
+> 💡 **Garbled OLED?** Some modules are SH1106 instead of SSD1306. If you see noise, swap the constructor to `U8G2_SH1106_128X64_NONAME_F_HW_I2C`. Upside-down? Switch `U8G2_R0` ↔ `U8G2_R2`.
+
+> 💡 **"Write timeout" on upload?** The agent is probably holding the COM port. Turn on **Pause Knoc8** (see [Flashing](#️-flashing-while-the-agent-is-installed)), or hold **BOOT**, tap **RESET**, then upload.
 
 ### 2 — Set up the desktop app
 
@@ -209,7 +239,7 @@ Run the settings tool and set at least your Ollama Cloud API key and COM port:
 python settings.py
 ```
 
-Or create `desktop/.env` by hand (it's git-ignored):
+Or open the browser panel with `python settings_web.py`, or create `desktop/.env` by hand (it's git-ignored):
 
 ```env
 OLLAMA_API_KEY=your-ollama-cloud-api-key
@@ -233,7 +263,20 @@ Point a shortcut at `watcher.py` in your Windows **Startup** folder (`shell:star
 start "" /min pythonw "FULL\PATH\TO\desktop\watcher.py"
 ```
 
-After each login the watcher runs quietly and launches the agent automatically whenever the ESP32 is connected (and stops it when unplugged).
+After each login the watcher runs quietly and launches the agent automatically whenever the ESP32 is connected (and stops it when unplugged). Its log is at `desktop/logs/watcher.log`.
+
+---
+
+## ⏸️ Flashing while the agent is installed
+
+The agent holds the COM port, which blocks uploads. To flash:
+
+1. Set `KNOC8_PAUSED=1` (settings panel → **Developer → Pause Knoc8**, or `python settings.py set KNOC8_PAUSED 1`).
+2. Within a few seconds the watcher stops the agent and frees the port.
+3. Flash the ESP32.
+4. Set `KNOC8_PAUSED=0` to resume. The watcher relaunches the agent when it sees the device.
+
+If the agent doesn't auto-start after you resume, check that `KNOC8_PAUSED` is really `0` (or absent) in `.env`, then read `desktop/logs/watcher.log`.
 
 ---
 
@@ -259,6 +302,8 @@ Everything lives in `desktop/.env` (managed by `settings.py`). Change the LLM by
 | `KNOC8_CHROME_PROFILE` | *(empty)* | Default Chrome profile (empty = ask by voice) |
 | `KNOC8_CODING_AGENT` | *(auto)* | `claude`, `cursor-agent`, `aider`, `codex`, `gemini` |
 | `KNOC8_NOISE_REDUCTION` | `1` | Noise cancellation on/off |
+| `KNOC8_SAFE_MODE` | `1` | Ask before destructive actions |
+| `KNOC8_PAUSED` | `0` | `1` = stop the agent and free the COM port for flashing |
 
 CLI shortcuts: `python settings.py list` · `python settings.py get KEY` · `python settings.py set KEY VALUE`.
 
@@ -286,7 +331,7 @@ CLI shortcuts: `python settings.py list` · `python settings.py get KEY` · `pyt
 - The LLM only **proposes** tool calls — Python validates every step against the registry before execution.
 - **Confirmation required** (native Yes/No popup) for: file/folder deletion, shutdown, restart, and terminal commands matching dangerous patterns (`rm`, `del`, `format`, `diskpart`, `reg add/delete`, `taskkill /f`, ...).
 - Admin commands are relaunched through Windows UAC, so the OS itself prompts you.
-- Every command, transcript, and result is logged to `desktop/logs/`.
+- Every command, transcript, and result is logged to `desktop/logs/` with API keys redacted.
 - `pyautogui` failsafe: slam the mouse into a screen corner to abort automation instantly.
 
 ---
@@ -301,10 +346,10 @@ PC → ESP32   STATUS:<IDLE|LISTENING|THINKING|EXECUTING|SPEAKING>   (drives the
 ESP32 → PC   READY
              BUTTON:DOWN                      (button pressed)
              BUTTON:UP                        (button released)
-             CHUNK:<n> + n bytes of raw PCM   (ONLY while held)
+             0xAA 0x55 <len lo> <len hi> <PCM>   (audio frame, ONLY while held)
 ```
 
-Chunk-framing keeps binary audio from ever corrupting line parsing, and the protocol is trivially extendable with new message types.
+Text lines are newline-terminated ASCII. Audio is sent as **binary frames** with a sync header and length, written in a single call. The PC parser resynchronises on the header, so a damaged audio frame can never swallow a text line such as `BUTTON:UP`.
 
 ---
 
@@ -318,6 +363,7 @@ Chunk-framing keeps binary audio from ever corrupting line parsing, and the prot
 - [x] Noise cancellation
 - [x] Persistent memory + activity journal
 - [x] Auto-start on device connect
+- [x] Pause mode for flashing
 - [ ] In-page browser automation (click, read, fill forms)
 - [ ] Camera + computer vision · face recognition
 - [ ] Local LLM support · plugin system
@@ -326,7 +372,7 @@ Chunk-framing keeps binary audio from ever corrupting line parsing, and the prot
 
 ## 🧰 Tech Stack
 
-**Firmware:** Arduino (ESP32-C3), Adafruit SSD1306/GFX, ESP_I2S
+**Firmware:** Arduino (ESP32-C3), U8g2, ESP_I2S
 **Desktop:** Python 3.10+ · rich (console UI) · faster-whisper (STT) · pyttsx3 (TTS) · noisereduce + scipy (DSP) · pyserial · pyautogui / pygetwindow / pyperclip / pycaw · Ollama Cloud (MiniMax M3)
 
 ---
