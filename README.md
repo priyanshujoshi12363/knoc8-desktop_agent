@@ -13,9 +13,6 @@
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 <br>
-
-<img src="desktop/photo/image.jpeg" alt="Knoc8 final product" width="46%">
-<img src="desktop/photo/image1.jpeg" alt="Knoc8 final product" width="46%">
 &nbsp;
 <img src="desktop/photo/image2.jpeg" alt="Knoc8 OLED face close-up" width="46%">
 
