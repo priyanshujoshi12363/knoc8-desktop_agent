@@ -39,6 +39,7 @@ class Knoc8:
 
         self.tts = TextToSpeech()
         self.serial = SerialManager()
+        self._pending_press = False
 
     # ------------------------------------------------------------------ run
 
@@ -69,7 +70,11 @@ class Knoc8:
 
         try:
             while True:
-                event = self.serial.poll()
+                if self._pending_press:
+                    self._pending_press = False
+                    event = ("line", "BUTTON:DOWN")
+                else:
+                    event = self.serial.poll()
                 if event is None:
                     time.sleep(0.002)          # don't spin a core
                     continue
@@ -82,6 +87,7 @@ class Knoc8:
                     elif line.startswith("BUTTON:DOWN"):
                         recording = True
                         capture.reset()
+                        highpass.reset()
                         self.serial.send_status("LISTENING")
                         ui.listening()
                     elif line.startswith("BUTTON:UP"):
@@ -135,13 +141,17 @@ class Knoc8:
             ui.warn(f"Mic level very low ({note})")
 
         self._handle_utterance(audio, denoise, note)
-        self.serial.send_status("IDLE")
+        if not self._pending_press:
+            self.serial.send_status("IDLE")
 
     def _handle_utterance(self, audio: bytes, denoise, note: str = "") -> None:
         self.serial.send_status("THINKING")
         ui.thinking_start()
         try:
-            text = self.stt.transcribe(denoise(audio))
+            started = time.perf_counter()
+            cleaned = denoise(audio)
+            log.info("Audio cleanup %.2fs", time.perf_counter() - started)
+            text = self.stt.transcribe(cleaned)
         except Exception as exc:
             # One bad transcription must never kill the agent.
             log.error("Transcription failed: %s", exc, exc_info=True)
@@ -232,6 +242,7 @@ class Knoc8:
                 continue
             if event[0] == "line" and str(event[1]).startswith("BUTTON:DOWN"):
                 proc.kill()
+                self._pending_press = True
                 interrupted = True
                 break
         if proc.poll() is None:

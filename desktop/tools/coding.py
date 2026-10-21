@@ -1,9 +1,7 @@
-"""Coding tool — hands real software work to a dedicated coding agent.
+"""Coding catalogue, project helpers, and legacy external CLI helpers.
 
-Knoc8's planner is one-shot: it writes a plan before anything runs, so it
-cannot read a build error and fix it.  Rather than fake that, this tool
-delegates to a coding CLI (Claude Code, Cursor, aider, ...) which *does*
-loop, and runs it in a visible terminal window inside the target project.
+Planner resolves build/continue_task to its built-in selected-LLM loop.
+The external launch functions remain for direct legacy callers only.
 """
 
 import os
@@ -143,17 +141,15 @@ def list_agents() -> str:
 ACTIONS = {
     "build": Action(
         build,
-        "Build a NEW software project. Creates the folder and hands the whole "
-        "job to a real coding agent that writes files, installs packages, runs "
-        "the build and fixes its own errors. Use this for any real programming "
-        "request instead of writing source files yourself.",
-        {"task": "full description of what to build, in one sentence",
+        "Build a NEW software project using the selected LLM inside Knoc8. "
+        "Writes files, runs checks, and fixes errors in a bounded loop.",
+        {"task": "complete requirements, desired output and verification criteria",
          "directory": "project folder path, e.g. D:\\projects\\todo-app"},
         dangerous=True,
     ),
     "continue_task": Action(
         continue_task,
-        "Continue or modify an EXISTING project with the coding agent "
+        "Continue or modify an EXISTING project using Knoc8's selected LLM "
         "(add a feature, fix a bug, refactor).",
         {"task": "what to change", "directory": "the existing project folder"},
         dangerous=True,

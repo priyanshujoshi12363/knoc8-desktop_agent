@@ -13,6 +13,9 @@ class HighPassFilter:
         self._b, self._a = butter(2, cutoff_hz / (config.SAMPLE_RATE / 2), "highpass")
         self._zi = lfilter_zi(self._b, self._a) * 0.0
 
+    def reset(self) -> None:
+        self._zi.fill(0.0)
+
     def process(self, pcm: bytes) -> bytes:
         from scipy.signal import lfilter
 

@@ -50,13 +50,17 @@ FIELDS = [
      ["tiny", "base", "small", "medium"], "base", False),
     ("Voice & Audio", "KNOC8_WHISPER_DEVICE", "Whisper device", "select",
      ["auto", "cpu", "cuda"], "auto", False),
+    ("Voice & Audio", "KNOC8_WHISPER_LANGUAGE", "Speech language (auto for mixed languages)", "select",
+     ["en", "hi", "auto"], "en", False),
+    ("Voice & Audio", "KNOC8_WHISPER_BEAM_SIZE", "Speech decoding beam size (1 faster, 5 more thorough)", "number", None, "3", False),
+    ("General", "KNOC8_LLM_TIMEOUT", "AI request timeout (seconds)", "number", None, "30", False),
     ("Voice & Audio", "KNOC8_TTS_RATE", "Voice speed (words/min)", "number", None, "175", False),
     ("Voice & Audio", "KNOC8_MAX_HOLD_MS", "Maximum hold length (ms)", "number", None, "30000", False),
     ("Voice & Audio", "KNOC8_NOISE_REDUCTION", "Noise cancellation (1 on / 0 off)", "text", None, "1", False),
 
     ("Browser", "KNOC8_CHROME_PROFILE", "Default Chrome profile (blank = ask)", "text", None, "", False),
 
-    ("Coding", "KNOC8_CODING_AGENT", "Coding agent (blank = auto-detect)", "model",
+    ("Coding", "KNOC8_CODING_AGENT", "Legacy external agent preference (built-in coding uses selected LLM)", "model",
      ["", "claude", "cursor-agent", "aider", "codex", "gemini"], "", False),
 
     ("Safety", "KNOC8_SAFE_MODE", "Safe Mode — ask before delete / shutdown / risky commands", "toggle", None, "1", False),
