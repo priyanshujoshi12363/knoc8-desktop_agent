@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import time
 
 import config
 from logger import get_logger
@@ -35,21 +34,14 @@ class OllamaCloudProvider(LLMProvider):
             "model": self.model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": 0.2, "num_predict": config.LLM_MAX_TOKENS},
+            "options": {"temperature": 0.2},
         }
         log.debug("Ollama request (%d messages) -> %s", len(messages), self.model)
-        started = time.perf_counter()
         resp = self._session.post(
             self._url, json=payload, headers=self._headers, timeout=config.LLM_TIMEOUT
         )
         resp.raise_for_status()
-        data = resp.json()
-        log.info("LLM response %.2fs; server total=%s ns, generation=%s ns, tokens=%s",
-                 time.perf_counter() - started, data.get("total_duration"),
-                 data.get("eval_duration"), data.get("eval_count"))
-        if data.get("done_reason") == "length":
-            raise ValueError("Model output reached its token limit; shorten the task or increase KNOC8_LLM_MAX_TOKENS")
-        return data["message"]["content"]
+        return resp.json()["message"]["content"]
 
 
 class AnthropicProvider(LLMProvider):

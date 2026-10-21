@@ -21,7 +21,7 @@ LOGS_DIR = BASE_DIR / "logs"
 MEMORY_FILE = BASE_DIR / "memory.json"
 
 LLM_PROVIDER: str = os.getenv("KNOC8_LLM_PROVIDER", "ollama").lower()
-LLM_TIMEOUT: int = int(os.getenv("KNOC8_LLM_TIMEOUT", "30"))
+LLM_TIMEOUT: int = 120
 LLM_HISTORY_TURNS: int = 10
 LLM_MAX_TOKENS: int = int(os.getenv("KNOC8_LLM_MAX_TOKENS", "2048"))
 
@@ -40,8 +40,6 @@ OPENAI_MODEL: str = os.getenv("KNOC8_OPENAI_MODEL", "gpt-4o")
 OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "")
 
 WHISPER_MODEL: str = os.getenv("KNOC8_WHISPER_MODEL", "base")
-WHISPER_LANGUAGE: str = os.getenv("KNOC8_WHISPER_LANGUAGE", "en")
-WHISPER_BEAM_SIZE: int = max(1, int(os.getenv("KNOC8_WHISPER_BEAM_SIZE", "3")))
 def _pick_device() -> tuple[str, str]:
     """Use the GPU when one is actually usable, otherwise CPU int8."""
     want = os.getenv("KNOC8_WHISPER_DEVICE", "auto").lower()
